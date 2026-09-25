@@ -61,6 +61,9 @@ async def ingest_text(update, context) -> None:
     if await templates.handle_template_input(update, context):
         return
 
+    if await threads.handle_thread_input(update, context):
+        return
+
     text = (msg.text or "").strip()
     if not text:
         return
@@ -68,13 +71,28 @@ async def ingest_text(update, context) -> None:
 
 
 async def ingest_photo(update, context) -> None:
-    """Photo in: attach to an open edit flow or start a new photo draft."""
+    """Photo in: attach to an open edit/thread flow or start a new photo draft."""
     from utils.ui import deny, is_admin
 
     if not is_admin(update):
         await deny(update, context)
         return
+    if await threads.handle_thread_media(update, context):
+        return
     await editor.handle_media(update, context)
+
+
+async def ingest_video(update, context) -> None:
+    """Video/document in: thread attach-slot flow consumes it; otherwise ignored.
+
+    (Single-tweet media stays photo-only by design — see editor.handle_media.)
+    """
+    from utils.ui import deny, is_admin
+
+    if not is_admin(update):
+        await deny(update, context)
+        return
+    await threads.handle_thread_media(update, context)
 
 
 async def on_startup(app: Application) -> None:
@@ -117,9 +135,13 @@ def build_application() -> Application:
     app.add_handler(CommandHandler("set_tz", settings.set_tz_command))
     app.add_handler(CommandHandler("template", templates.template_command))
     app.add_handler(CommandHandler("report", report.report_command))
+    app.add_handler(CommandHandler("thread", threads.thread_command))
 
     # ---- plain messages: text/photo ingestion (draft + edit/custom-time flows) --
     app.add_handler(MessageHandler(filters.PHOTO, ingest_photo))
+    # videos/documents are consumed only while the thread attach-slot flow is open
+    app.add_handler(MessageHandler((filters.VIDEO | filters.ANIMATION) & ~filters.COMMAND,
+                                   ingest_video))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, ingest_text))
 
     # ---- inline keyboard callbacks -------------------------------------------

@@ -134,6 +134,12 @@ def thread_media_keyboard(post_id: int, n_tweets: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(rows)
 
 
+def thread_templates_button(post_id: int, rss: bool = False) -> InlineKeyboardButton:
+    """📋 Templates button for thread draft cards → per-tweet injection picker."""
+    token = f"r{post_id}" if rss else str(post_id)
+    return InlineKeyboardButton("📋 Templates", callback_data=f"tpl:inject:{token}")
+
+
 def thread_remove_media_keyboard(post_id: int, slots: list[tuple[int, str]]) -> InlineKeyboardMarkup:
     """slots = [(tweet_position, filename), ...] — one 🗑 button per attached file."""
     rows: list[list[InlineKeyboardButton]] = []

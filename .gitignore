@@ -1,6 +1,2 @@
-# Compiled files
 __pycache__/
-*.pyc
-
-# Database files
-data/bot.db
+data/jobs.db

@@ -122,12 +122,36 @@ def bootstrap(application) -> AsyncIOScheduler:
     """
     global _bootstrapped
     scheduler.application = application  # type: ignore[attr-defined]
-    if _bootstrapped and scheduler.running:
-        log.info("bootstrap() called again — skipping (scheduler already running)")
+    if _bootstrapped:
+        log.info("bootstrap() called again — skipping (scheduler already initialized)")
         return scheduler
     _bootstrapped = True
 
     now = utc_now_aware()
+
+    # Recurring jobs are registered BEFORE the per-post restore loop so they can
+    # never be clobbered by a second bootstrap path. add_job(...,
+    # replace_existing=True) keeps this idempotent even though the persistent
+    # SQLAlchemyJobStore reloads these rows on every restart.
+    interval = max(5, config.RSS_POLL_MINUTES)
+    scheduler.add_job(rss_poll_job, "interval", minutes=interval,
+                      id="rss_poll", replace_existing=True,
+                      next_run_time=now)  # first poll right after boot
+
+    scheduler.add_job(reset_rss_count, "cron", hour=0, minute=0,
+                      id="rss_reset", replace_existing=True)
+
+    # Re-arm any publish jobs that were still pending when we last shut down
+    # (they live in the persistent job store). Doing this BEFORE scheduler.start()
+    # prevents APScheduler's misfire handling from silently dropping due jobs.
+    for job in list(scheduler.get_jobs()):
+        if job.id.startswith("publish_") and job.next_run_time is None:
+            try:
+                job.modify(next_run_time=now)
+                log.info("re-armed pending publish job %s", job.id)
+            except Exception:
+                log.exception("could not re-arm job %s", job.id)
+
     for post in crud.scheduled_posts():
         when = post.scheduled_at.replace(tzinfo=timezone.utc) if post.scheduled_at else None
         if when is None:
@@ -140,13 +164,6 @@ def bootstrap(application) -> AsyncIOScheduler:
         else:
             schedule_post_job(post.id, when)
 
-    interval = max(5, config.RSS_POLL_MINUTES)
-    scheduler.add_job(rss_poll_job, "interval", minutes=interval,
-                      id="rss_poll", replace_existing=True,
-                      next_run_time=now)  # first poll right after boot
-
-    scheduler.add_job(reset_rss_count, "cron", hour=0, minute=0,
-                      id="rss_reset", replace_existing=True)
     if not scheduler.running:
         scheduler.start()
     log.info("scheduler started; %d scheduled posts restored", crud.count_posts("scheduled"))
