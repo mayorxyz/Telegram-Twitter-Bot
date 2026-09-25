@@ -9,7 +9,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
 from db import crud
-from scheduler.jobs import unschedule_post_job
+from scheduler.jobs import schedule_post_job, unschedule_post_job
 from utils import config
 from utils.formatting import escape_html
 from utils.timeutil import to_admin_tz
@@ -242,8 +242,6 @@ async def _handle_delete_step(update: Update, context: ContextTypes.DEFAULT_TYPE
     if _restore(post_id):
         post = crud.get_post(post_id)
         if post is not None and post.status == "scheduled" and post.scheduled_at:
-            from scheduler.jobs import schedule_post_job
-
             when = post.scheduled_at
             if when.tzinfo is None:
                 when = when.replace(tzinfo=timezone.utc)

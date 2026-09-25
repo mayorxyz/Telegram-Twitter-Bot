@@ -15,6 +15,9 @@ from utils.timeutil import utc_now_aware
 
 log = logging.getLogger(__name__)
 
+# Module-level guard so bootstrap() can never double-initialize the scheduler.
+_bootstrapped = False
+
 JOBS_DB = os.path.join(os.path.dirname(config.MEDIA_DIR), "jobs.db")
 os.makedirs(os.path.dirname(JOBS_DB), exist_ok=True)
 
@@ -109,8 +112,20 @@ async def reset_rss_count() -> None:
 
 
 def bootstrap(application) -> AsyncIOScheduler:
-    """Attach PTB app, restore jobs from DB, register recurring jobs, start scheduler."""
+    """Attach PTB app, restore jobs from DB, register recurring jobs, start scheduler.
+
+    Idempotent: guarded by the module-level _bootstrapped flag so a second call
+    (e.g. from both main.py and an errant post_init hook) can never double-start
+    the scheduler or duplicate the recurring RSS/reset jobs. Per-post publish
+    jobs remain safe to re-add because they use replace_existing=True with
+    deterministic ids.
+    """
+    global _bootstrapped
     scheduler.application = application  # type: ignore[attr-defined]
+    if _bootstrapped and scheduler.running:
+        log.info("bootstrap() called again — skipping (scheduler already running)")
+        return scheduler
+    _bootstrapped = True
 
     now = utc_now_aware()
     for post in crud.scheduled_posts():
