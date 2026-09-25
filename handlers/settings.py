@@ -84,6 +84,8 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         "• /pause — hold all publishing\n"
         "• /resume — release the hold\n"
         "• /set_tz &lt;Area/City&gt; — store your timezone\n"
+        "• /template — save/inject text snippets (hashtags, disclaimers)\n"
+        "• /report — weekly/monthly health digest from local stats\n"
         "• /help — this message"
     )
     await update.message.reply_text(help_text, parse_mode="HTML")

@@ -46,3 +46,15 @@ class Setting(Base):
 
     def __repr__(self) -> str:  # pragma: no cover
         return f"<Setting {self.key}={self.value!r}>"
+
+
+class Template(Base):
+    __tablename__ = "templates"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return f"<Template {self.id} {self.name!r}>"

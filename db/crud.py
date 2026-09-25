@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from sqlalchemy import func, select
 
 from db.database import get_session
-from db.models import Post, Setting, utcnow
+from db.models import Post, Setting, Template, utcnow
 
 
 def _to_naive_utc(dt: datetime) -> datetime:
@@ -86,6 +86,55 @@ def count_posts(*statuses: str) -> int:
 
 def scheduled_posts() -> list[Post]:
     return list_posts(("scheduled",))
+
+
+def count_published_since(when_utc: datetime) -> int:
+    """Number of posts published at/after `when_utc` (naive or aware; stored naive UTC)."""
+    when = _to_naive_utc(when_utc) if when_utc.tzinfo else when_utc
+    stmt = select(func.count(Post.id)).where(Post.status == "published",
+                                             Post.published_at >= when)
+    with get_session() as s:
+        return s.scalar(stmt) or 0
+
+
+# -------------------------------------------------------------- templates ---
+
+def get_templates() -> list[Template]:
+    stmt = select(Template).order_by(Template.name)
+    with get_session() as s:
+        return list(s.scalars(stmt))
+
+
+def get_template(template_id: int) -> Template | None:
+    with get_session() as s:
+        return s.get(Template, template_id)
+
+
+def create_template(name: str, content: str) -> Template | None:
+    """Create a template. Returns None when name/content empty or name already exists."""
+    name = (name or "").strip()
+    content = (content or "").strip()
+    if not name or not content:
+        return None
+    with get_session() as s:
+        exists = s.scalar(select(Template.id).where(Template.name == name))
+        if exists is not None:
+            return None
+        t = Template(name=name, content=content)
+        s.add(t)
+        s.commit()
+        s.refresh(t)
+        return t
+
+
+def delete_template(template_id: int) -> bool:
+    with get_session() as s:
+        t = s.get(Template, template_id)
+        if t is None:
+            return False
+        s.delete(t)
+        s.commit()
+        return True
 
 
 # ------------------------------------------------------------- settings -----

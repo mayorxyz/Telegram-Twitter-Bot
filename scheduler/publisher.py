@@ -2,8 +2,9 @@
 from __future__ import annotations
 
 import logging
-from datetime import timezone
+from datetime import datetime, timedelta, timezone
 
+import tweepy
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application
 
@@ -16,6 +17,15 @@ from utils.twitter import PublishError, publish_tweet
 log = logging.getLogger(__name__)
 
 
+def _is_rate_limit(exc: BaseException) -> bool:
+    """True for tweepy 429 responses (TooManyRequests or HTTPException with status 429)."""
+    if isinstance(exc, tweepy.errors.TooManyRequests):
+        return True
+    if isinstance(exc, tweepy.errors.HTTPException):
+        return getattr(exc, "status_code", None) == 429
+    return False
+
+
 def final_text_for(post) -> str:
     """Apply auto-format at publish time only; draft content stays raw."""
     text = post.content or ""
@@ -25,7 +35,12 @@ def final_text_for(post) -> str:
 
 
 async def publish_post(application: Application, post_id: int, manual: bool = False) -> bool:
-    """Publish one post by id. Returns True on success. Never raises."""
+    """Publish one post by id. Returns True on success. Never raises.
+
+    Free-tier protection: a 429 from the X API does NOT mark the post failed —
+    it is pushed back 15 minutes, the APScheduler job is re-armed, and the
+    admin is notified.
+    """
     post = crud.get_post(post_id)
     if post is None:
         log.warning("publish: post %s vanished", post_id)
@@ -38,21 +53,47 @@ async def publish_post(application: Application, post_id: int, manual: bool = Fa
     try:
         tweet_id = publish_tweet(text, post.media_path)
     except PublishError as exc:
+        if _is_rate_limit(exc.__cause__ if exc.__cause__ else exc):
+            await _handle_rate_limit(application, post_id)
+            return False
         crud.update_post(post_id, status="failed", error=str(exc))
         await _notify_failure(application, post_id, str(exc))
         return False
-    except Exception as exc:  # network / unexpected
+    except Exception as exc:  # network / unexpected (incl. raw tweepy errors)
+        if _is_rate_limit(exc):
+            await _handle_rate_limit(application, post_id)
+            return False
         log.exception("unexpected publish error")
         crud.update_post(post_id, status="failed", error=f"Unexpected: {exc}")
         await _notify_failure(application, post_id, str(exc))
         return False
 
-    from datetime import datetime
     crud.update_post(post_id, status="published", published_at=datetime.now(timezone.utc),
                      tweet_id=tweet_id, error=None)
     post = crud.get_post(post_id)
     await _notify_success(application, post)
     return True
+
+
+async def _handle_rate_limit(application: Application, post_id: int) -> None:
+    """Smart backoff: reschedule +15 min, re-arm the job, notify the admin."""
+    from scheduler.jobs import schedule_post_job
+
+    new_time = datetime.utcnow() + timedelta(minutes=15)
+    crud.update_post(post_id, status="scheduled", scheduled_at=new_time,
+                     error="Rate limited, auto-rescheduled")
+    schedule_post_job(post_id, new_time.replace(tzinfo=timezone.utc))
+    log.warning("rate limited on post %s — pushed to %s UTC", post_id, new_time)
+    try:
+        await application.bot.send_message(
+            chat_id=config.ADMIN_ID,
+            text=(f"⚠️ <b>X API Rate Limit Hit</b>\n\n"
+                  f"Post #{post_id} was auto-rescheduled for "
+                  f"<code>{new_time.strftime('%Y-%m-%d %H:%M UTC')}</code>.\n"
+                  f"This protects your Free Tier daily quota."),
+            parse_mode="HTML")
+    except Exception:
+        log.exception("rate-limit notification failed")
 
 
 async def _notify_success(application: Application, post) -> None:

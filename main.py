@@ -24,15 +24,23 @@ from telegram.ext import (  # noqa: E402
 
 from db import crud  # noqa: E402
 from db.database import init_db  # noqa: E402
-from handlers import drafts, editor, queue, scheduler_flow, settings  # noqa: E402
+from handlers import (  # noqa: E402
+    drafts,
+    editor,
+    queue,
+    report,
+    scheduler_flow,
+    settings,
+    templates,
+)
 from scheduler import jobs  # noqa: E402
 from utils import config  # noqa: E402
 
 log = logging.getLogger(__name__)
 
 
-async def message_handler(update, context) -> None:
-    """Ingest free-form text/photos: consume editor flows first, else new draft."""
+async def ingest_text(update, context) -> None:
+    """Plain text in: consume active input flows first, else create a draft."""
     from utils.ui import deny, is_admin
 
     if not is_admin(update):
@@ -43,20 +51,29 @@ async def message_handler(update, context) -> None:
     if msg is None:
         return
 
-    if msg.photo:
-        await editor.handle_media(update, context)
-        return
-
     if await editor.handle_flow_message(update, context):
         return
 
     if await settings.handle_timezone_input(update, context):
         return
 
+    if await templates.handle_template_input(update, context):
+        return
+
     text = (msg.text or "").strip()
     if not text:
         return
     await drafts.new_draft_message(update, context, text)
+
+
+async def ingest_photo(update, context) -> None:
+    """Photo in: attach to an open edit flow or start a new photo draft."""
+    from utils.ui import deny, is_admin
+
+    if not is_admin(update):
+        await deny(update, context)
+        return
+    await editor.handle_media(update, context)
 
 
 async def on_startup(app: Application) -> None:
@@ -97,10 +114,12 @@ def build_application() -> Application:
     app.add_handler(CommandHandler("resume", settings.resume_command))
     app.add_handler(CommandHandler("settings", settings.settings_command))
     app.add_handler(CommandHandler("set_tz", settings.set_tz_command))
+    app.add_handler(CommandHandler("template", templates.template_command))
+    app.add_handler(CommandHandler("report", report.report_command))
 
     # ---- plain messages: text/photo ingestion (draft + edit/custom-time flows) --
-    app.add_handler(MessageHandler((filters.TEXT | filters.PHOTO) & ~filters.COMMAND,
-                                   message_handler))
+    app.add_handler(MessageHandler(filters.PHOTO, ingest_photo))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, ingest_text))
 
     # ---- inline keyboard callbacks -------------------------------------------
     app.add_handler(CallbackQueryHandler(drafts.draft_callback, pattern=r"^(d|tag|dup|f|st):"))
@@ -112,6 +131,7 @@ def build_application() -> Application:
     app.add_handler(CallbackQueryHandler(editor.editor_callback,
                                          pattern=r"^(ed_save|ed_cancel|custom_time):"))
     app.add_handler(CallbackQueryHandler(settings.settings_callback, pattern=r"^(set|tz):"))
+    app.add_handler(CallbackQueryHandler(templates.template_callback, pattern=r"^tpl:"))
 
     app.post_init = on_startup
     return app

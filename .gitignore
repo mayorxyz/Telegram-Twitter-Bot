@@ -1,15 +1,5 @@
-# Python bytecode
-__pycache__/
-*.pyc
-
-# Environment variables
-.env
-.env.local
-.env.*.local
-
-# Keep .env.example tracked (do not ignore)node_modules/
+__pycache__/node_modules/
 .next/
 dist/
 build/
 *.log
-node_modules/

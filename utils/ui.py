@@ -49,6 +49,13 @@ def pop_undo(post_id: int):
 
 
 def draft_keyboard(post_id: int, rss: bool = False) -> InlineKeyboardMarkup:
+    from db import crud  # local import avoids circulars at module load
+
+    token = f"r{post_id}" if rss else str(post_id)
+    row_tpl = []
+    if crud.get_templates():
+        row_tpl.append(InlineKeyboardButton("📋 Templates",
+                                            callback_data=f"tpl:inject:{token}"))
     if rss:
         rows = [
             [
@@ -60,6 +67,8 @@ def draft_keyboard(post_id: int, rss: bool = False) -> InlineKeyboardMarkup:
                 InlineKeyboardButton("🔄 Regenerate", callback_data=f"d:r{post_id}:regen"),
             ],
         ]
+        if row_tpl:
+            rows.append(row_tpl)
         return InlineKeyboardMarkup(rows)
     row1 = [
         InlineKeyboardButton("✅ Confirm", callback_data=f"d:{post_id}:confirm"),
@@ -72,7 +81,10 @@ def draft_keyboard(post_id: int, rss: bool = False) -> InlineKeyboardMarkup:
         InlineKeyboardButton("🏷 Tag", callback_data=f"d:{post_id}:tags"),
         InlineKeyboardButton("📎 Media", callback_data=f"d:{post_id}:media"),
     ]
-    return InlineKeyboardMarkup([row1, row2])
+    rows = [row1, row2]
+    if row_tpl:
+        rows.append(row_tpl)
+    return InlineKeyboardMarkup(rows)
 
 
 def tag_keyboard(post_id: int) -> InlineKeyboardMarkup:

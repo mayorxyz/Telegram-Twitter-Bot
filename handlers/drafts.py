@@ -202,3 +202,25 @@ async def _failure_action(update: Update, context: ContextTypes.DEFAULT_TYPE,
             pass
     else:
         await cq.answer("Unknown action", show_alert=True)
+
+
+# ----------------------------------------------------- template injection --
+
+def has_templates() -> bool:
+    return bool(crud.get_templates())
+
+
+async def templates_keyboard(context: ContextTypes.DEFAULT_TYPE, chat_id: int,
+                             post_id: int, message_id: int) -> None:
+    """[📋 Templates] pressed on a draft card → inline picker of saved snippets."""
+    from handlers.templates import render_picker
+
+    await render_picker(context.bot, chat_id, post_id, message_id=message_id)
+
+
+async def use_template(context: ContextTypes.DEFAULT_TYPE, chat_id: int,
+                       post_id: int, tpl_id: int, message_id: int | None = None) -> None:
+    """Append template content to the draft's raw text and re-render its preview."""
+    from handlers.templates import inject_template
+
+    await inject_template(context, chat_id, post_id, tpl_id, message_id=message_id)
