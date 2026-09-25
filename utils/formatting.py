@@ -61,6 +61,12 @@ def format_preview(post) -> str:
     }.get(post.status, post.status)
 
     lines = [f"<b>Post #{post.id}</b>  ·  {status_emoji}"]
+
+    if getattr(post, "thread", None) is not None:
+        # threads get their own per-tweet layout (char counts + media badges)
+        body = format_thread_preview(post)
+        return f"{lines[0]}\n{body}"
+
     if post.tag:
         lines.append(f"🏷 <code>{post.tag}</code>")
     body = post.content or ""
@@ -79,6 +85,63 @@ def format_preview(post) -> str:
         lines.append(f"🕐 fires at {loc:%Y-%m-%d %H:%M} ({crud.get_setting('timezone', 'UTC')})")
     if post.published_at:
         lines.append(f"🚀 published {to_admin_tz(post.published_at.replace(tzinfo=timezone.utc)):%Y-%m-%d %H:%M}")
+    if post.status == "failed" and post.error:
+        lines.append(f"⚠️ <i>{escape_html(post.error[:200])}</i>")
+    return "\n".join(lines)
+
+
+# ------------------------------------------------------------- threads ------
+
+def thread_overview(post) -> str:
+    """Multi-line HTML overview of a thread (or the single-tweet body)."""
+    lines: list[str] = []
+    if getattr(post, "thread", None) is not None:
+        for tt in sorted(post.thread.tweets, key=lambda t: t.position):
+            snippet = escape_html((tt.content or "").replace("\n", " ")[:120])
+            n_media = len(tt.media_ids or [])
+            media_note = f"  📎×{n_media}" if n_media else ""
+            done = " ✅" if tt.tweet_id else ""
+            lines.append(f"<b>{tt.position + 1}.</b> {snippet}{media_note}{done}")
+        return "\n".join(lines)
+    body = post.content or ""
+    shown = body if len(body) <= 600 else body[:600] + "…"
+    return f"<pre>{escape_html(shown)}</pre>"
+
+
+def format_thread_preview(post) -> str:
+    """Full preview card body for a thread draft (used inside format_preview)."""
+    from datetime import timezone as _tz
+
+    from db import crud as _crud
+    from utils.timeutil import to_admin_tz as _to_loc
+
+    tweets = sorted(post.thread.tweets, key=lambda t: t.position)
+    lines = [f"🧵 <b>Thread · {len(tweets)} tweets</b>"]
+    if post.tag:
+        lines.append(f"🏷 <code>{post.tag}</code>")
+    lines.append("")
+    total = 0
+    over_any = False
+    for tt in tweets:
+        final = strip_markdown(tt.content or "") if post.auto_format else (tt.content or "")
+        n = effective_length(final.strip())
+        total += n
+        warn = " ⚠️" if n > X_CHAR_LIMIT else ""
+        if n > X_CHAR_LIMIT:
+            over_any = True
+        media_note = f"  📎×{len(tt.media_ids or [])}" if tt.media_ids else ""
+        snippet = escape_html((tt.content or "").replace("\n", " ")[:90])
+        lines.append(f"<b>{tt.position + 1}.</b> [{n}/{X_CHAR_LIMIT}]{warn}{media_note} {snippet}")
+    lines.append("")
+    lines.append(f"📏 {total} chars total across {len(tweets)} tweets")
+    if over_any:
+        lines.append("⚠️ <i>At least one tweet is over the 280 limit!</i>")
+    if post.scheduled_at and post.status == "scheduled":
+        loc = _to_loc(post.scheduled_at.replace(tzinfo=_tz.utc))
+        lines.append(f"🕐 fires at {loc:%Y-%m-%d %H:%M} "
+                     f"({_crud.get_setting('timezone', 'UTC')})")
+    if post.published_at:
+        lines.append(f"🚀 published {_to_loc(post.published_at.replace(tzinfo=_tz.utc)):%Y-%m-%d %H:%M}")
     if post.status == "failed" and post.error:
         lines.append(f"⚠️ <i>{escape_html(post.error[:200])}</i>")
     return "\n".join(lines)

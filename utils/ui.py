@@ -1,6 +1,7 @@
 """Shared UI helpers: admin guard, preview rendering, undo storage."""
 from __future__ import annotations
 
+import os
 import time
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, Update
@@ -52,10 +53,27 @@ def draft_keyboard(post_id: int, rss: bool = False) -> InlineKeyboardMarkup:
     from db import crud  # local import avoids circulars at module load
 
     token = f"r{post_id}" if rss else str(post_id)
+    is_thread = crud.get_thread(post_id) is not None
     row_tpl = []
     if crud.get_templates():
         row_tpl.append(InlineKeyboardButton("📋 Templates",
                                             callback_data=f"tpl:inject:{token}"))
+    if is_thread:
+        rows = [
+            [
+                InlineKeyboardButton("✅ Confirm", callback_data=f"d:{token}:confirm"),
+                InlineKeyboardButton("✏️ Edit", callback_data=f"d:{token}:edit"),
+                InlineKeyboardButton("❌ Cancel", callback_data=f"d:{token}:cancel"),
+            ],
+            [
+                InlineKeyboardButton("🖼 Attach Media", callback_data=f"d:{token}:tmedia"),
+                InlineKeyboardButton("🔁 Duplicate", callback_data=f"d:{token}:dup"),
+                InlineKeyboardButton("🏷 Tag", callback_data=f"d:{token}:tags"),
+            ],
+        ]
+        if row_tpl:
+            rows.append(row_tpl)
+        return InlineKeyboardMarkup(rows)
     if rss:
         rows = [
             [
@@ -106,6 +124,28 @@ def media_keyboard(post_id: int, has_media: bool) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([row])
 
 
+def thread_media_keyboard(post_id: int, n_tweets: int) -> InlineKeyboardMarkup:
+    """Pick which tweet of the thread should receive the next photo(s)."""
+    rows: list[list[InlineKeyboardButton]] = []
+    for i in range(n_tweets):
+        rows.append([InlineKeyboardButton(f"Tweet {i + 1}",
+                                          callback_data=f"thm:{post_id}:{i}")])
+    rows.append([InlineKeyboardButton("↩️ Back", callback_data=f"d:{post_id}:back")])
+    return InlineKeyboardMarkup(rows)
+
+
+def thread_remove_media_keyboard(post_id: int, slots: list[tuple[int, str]]) -> InlineKeyboardMarkup:
+    """slots = [(tweet_position, filename), ...] — one 🗑 button per attached file."""
+    rows: list[list[InlineKeyboardButton]] = []
+    for idx, (pos, path) in enumerate(slots):
+        name = os.path.basename(path)[:24]
+        rows.append([InlineKeyboardButton(f"🗑 T{pos + 1}: {name}",
+                                          callback_data=f"th:rmm:{post_id}:{idx}")])
+    rows.append([InlineKeyboardButton("➕ Add more media", callback_data=f"d:{post_id}:tmedia"),
+                 InlineKeyboardButton("↩️ Done", callback_data=f"d:{post_id}:back")])
+    return InlineKeyboardMarkup(rows)
+
+
 def _preview_payload(post, text_extra: str, rss: bool) -> tuple[str, InlineKeyboardMarkup]:
     html = format_preview(post)
     if text_extra:
@@ -120,8 +160,9 @@ async def update_preview(context: ContextTypes.DEFAULT_TYPE, chat_id: int, post,
     if not post.tg_message_id:
         await show_preview(context, chat_id, post, text_extra, rss)
         return
+    is_thread = getattr(post, "thread", None) is not None
     try:
-        if post.media_path:
+        if post.media_path and not is_thread:
             # re-point the media too; caption-only edits can't change attachments
             await context.bot.edit_message_media(
                 chat_id=chat_id, message_id=post.tg_message_id,
@@ -149,7 +190,8 @@ async def show_preview(context: ContextTypes.DEFAULT_TYPE, chat_id: int, post,
     if post.tg_message_id:
         await update_preview(context, chat_id, post, text_extra, rss)
         return post.tg_message_id
-    if post.media_path:
+    is_thread = getattr(post, "thread", None) is not None
+    if post.media_path and not is_thread:
         sent = await context.bot.send_photo(
             chat_id=chat_id, photo=open(post.media_path, "rb"),
             caption=html, reply_markup=kb, parse_mode="HTML")
