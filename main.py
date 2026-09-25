@@ -32,6 +32,7 @@ from handlers import (  # noqa: E402
     scheduler_flow,
     settings,
     templates,
+    threads,
 )
 from scheduler import jobs  # noqa: E402
 from utils import config  # noqa: E402
@@ -122,16 +123,32 @@ def build_application() -> Application:
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, ingest_text))
 
     # ---- inline keyboard callbacks -------------------------------------------
+    # Registration order matters: PTB dispatches to the FIRST handler whose
+    # pattern matches. Patterns below are mutually exclusive — no callback_data
+    # string can match two of them (verified against every button in utils/ui.py,
+    # handlers/*.py). Do not reorder without re-checking prefixes.
+    # 1) Draft cards: d:<id>:<action>, tag:, dup:, f: (failure actions), st: (stats)
     app.add_handler(CallbackQueryHandler(drafts.draft_callback, pattern=r"^(d|tag|dup|f|st):"))
+    # 2) Calendar/time picker + immediate publish from cards: cal:, day:, hr:, mn:, now:, quick:
     app.add_handler(CallbackQueryHandler(scheduler_flow.sched_callback,
                                          pattern=r"^(cal|day|hr|mn|now|quick):"))
+    # 3) Queue view pagination + item actions: q:<action>:<id>
     app.add_handler(CallbackQueryHandler(queue.queue_callback, pattern=r"^q:"))
+    # 4) Queue delete two-step (10s undo window) + post-now aliases outside q: namespace
     app.add_handler(CallbackQueryHandler(queue.queue_callback,
                                          pattern=r"^(del_confirm|del_undo|post_now):"))
+    # 5) Editor flow buttons: ed_save, ed_cancel, custom_time
     app.add_handler(CallbackQueryHandler(editor.editor_callback,
                                          pattern=r"^(ed_save|ed_cancel|custom_time):"))
+    # 6) Settings menu + timezone picker: set:, tz:
     app.add_handler(CallbackQueryHandler(settings.settings_callback, pattern=r"^(set|tz):"))
+    # 7) Templates management + injection into drafts: tpl:  (no conflict with t:)
     app.add_handler(CallbackQueryHandler(templates.template_callback, pattern=r"^tpl:"))
+    # 8) Thread builder buttons: th: and thm: per-tweet media picker.
+    #    NOTE: registered as ^th(m)?: instead of ^t: because threads.py emits
+    #    callback_data like "th:add:<id>" / "thm:<id>:<slot>"; a bare ^t: pattern
+    #    would never match them and could shadow any future single-letter prefix.
+    app.add_handler(CallbackQueryHandler(threads.thread_callback, pattern=r"^th(m)?:"))
 
     app.post_init = on_startup
     return app
