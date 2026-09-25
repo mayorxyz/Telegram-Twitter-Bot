@@ -1,0 +1,9 @@
+python-telegram-bot==20.7
+SQLAlchemy==2.0.23
+apscheduler==3.10.4
+python-dotenv==1.0.0
+tweepy==4.14.0
+httpx==0.25.2
+feedparser==6.0.10
+croniter==2.0.1
+tzdata; sys_platform == 'win32'
