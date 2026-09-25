@@ -60,6 +60,16 @@ def _media_kind(path: str) -> str:
     return "unknown"
 
 
+_MIME_BY_EXT = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png",
+                ".webp": "image/webp", ".gif": "image/gif",
+                ".mp4": "video/mp4", ".mov": "video/quicktime"}
+
+
+def _guess_mime(path: str) -> str:
+    """MIME type from file extension (used for video chunked uploads)."""
+    return _MIME_BY_EXT.get(os.path.splitext(path)[1].lower(), "application/octet-stream")
+
+
 def upload_media(media_path: str) -> str:
     """Upload one image/video and return its media_id_string (Free-tier safe)."""
     if not config.twitter_configured():
@@ -67,13 +77,19 @@ def upload_media(media_path: str) -> str:
     if not media_path or not os.path.exists(media_path):
         raise PublishError(f"Media file missing: {media_path}")
     try:
-        if _media_kind(media_path) == "video":
-            uploaded = get_api().create_media_upload(media_path, media_type="video/mp4")
+        kind = _media_kind(media_path)
+        mime = _guess_mime(media_path)
+        if kind == "video":
+            uploaded = get_api().create_media_upload(media_path, media_type=mime)
         else:
             uploaded = get_api().media_upload(media_path)
         return uploaded.media_id_string
     except Exception as exc:
         log.exception("media upload failed for %s", media_path)
+        # Re-raise raw tweepy errors so the publisher's 429 detector still sees
+        # them; wrap everything else.
+        if isinstance(exc, tweepy.TweepyException):
+            raise
         raise PublishError(f"Media upload failed: {exc}") from exc
 
 

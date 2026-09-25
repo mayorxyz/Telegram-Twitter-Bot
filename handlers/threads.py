@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import uuid
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
@@ -104,11 +105,12 @@ def _save(context: ContextTypes.DEFAULT_TYPE, post_id: int,
 # ----------------------------------------------------------------- commands -
 
 async def thread_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """/thread — start a new thread draft.
+    """Start a new thread draft.
 
     Usage:
-        /thread                       → open an empty 2-tweet builder
-        /thread line1 --- line2 --- … → seed tweets from text (split on '---')
+        /thread                                  → empty 2-tweet builder
+        /thread line1 --- line2 --- …            → seed tweets (split on '---')
+        /thread with "tweet one" "tweet two"     → same, but quotes allow '|' inside text
     """
     from utils.ui import deny
 
@@ -116,7 +118,12 @@ async def thread_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await deny(update, context)
         return
     raw = " ".join(context.args or []).strip()
-    parts = [x.strip() for x in raw.split("|") if x.strip()] if raw else ["", ""]
+    if raw.startswith("with "):
+        parts = [p.strip() for p in re.findall(r'"([^"]+)"', raw)]
+    else:
+        parts = [x.strip() for x in raw.split("---") if x.strip()]
+    if not parts:
+        parts = ["", ""]
     if len(parts) > crud.MAX_THREAD_TWEETS:
         await update.message.reply_text(
             f"⚠️ Threads are capped at {crud.MAX_THREAD_TWEETS} tweets — "
@@ -327,10 +334,13 @@ async def thread_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             await cq.answer(f"Tweet(s) {', '.join(str(i + 1) for i in empties)} "
                             f"are empty — set text or attach media first.", show_alert=True)
             return
-        merged = "\n\n".join(t["content"] for t in tweets if t["content"].strip())
+        # Keep per-tweet rows authoritative (media is attached per tweet!).
+        # Only mirror tweet 1 onto post.content so queue/preview snippets stay
+        # meaningful; merging all tweets into one blob would make the publisher
+        # re-serialize the whole thread as a single oversized tweet.
         crud.reset_thread_tweet_state(post_id)
-        crud.update_post(post_id, content=merged)
-        fresh = crud.update_post(post_id, tg_message_id=None)
+        fresh = crud.update_post(post_id, content=tweets[0]["content"],
+                                 tg_message_id=None)
         await show_preview(context, chat_id, fresh,
                            text_extra="🧵 <b>Thread draft ready</b> — confirm, edit or cancel:")
         return

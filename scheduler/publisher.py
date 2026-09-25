@@ -12,7 +12,7 @@ from telegram.ext import Application
 
 from db import crud
 from utils import config
-from utils.formatting import escape_html, strip_markdown
+from utils.formatting import escape_html, effective_length, strip_markdown
 from utils.timeutil import to_admin_tz
 from utils.twitter import PublishError, publish_tweet
 
@@ -128,6 +128,13 @@ async def _publish_thread(application: Application, post) -> None:
             prev_id = done_ids[pos]
             first_id = first_id or prev_id
             continue
+        # fail fast BEFORE uploading media: an over-280 tweet would otherwise
+        # waste uploads and only die on create_tweet
+        n = effective_length(texts[idx])
+        if n > config.X_CHAR_LIMIT:
+            raise PublishError(
+                f"Tweet {pos + 1} of the thread is {n}/{config.X_CHAR_LIMIT} chars "
+                f"(over X limit). Shorten it and retry.")
 
         paths = [p for p in (tt.media_ids or []) if os.path.isfile(p)]
         missing = len(tt.media_ids or []) - len(paths)

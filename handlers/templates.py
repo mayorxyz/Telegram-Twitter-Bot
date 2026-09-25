@@ -76,18 +76,30 @@ async def _render_list(bot, chat_id: int, message_id: int | None = None,
 
 async def _render_picker(bot, chat_id: int, post_id: int, rss: bool,
                          message_id: int | None = None) -> None:
-    """Show all templates as inject buttons for the given draft."""
+    """Show all templates as inject buttons for the given draft.
+
+    Thread drafts get a single per-tweet-target picker (tpl:tpick:<post_id>)
+    instead of one button per template, because injection must land on a
+    specific tweet row — not on post.content.
+    """
     templates = crud.get_templates()
     token = _token(post_id, rss)
+    is_thread = crud.get_thread(post_id) is not None
     lines = [f"📋 <b>Inject template into draft #{post_id}</b>", "",
-             "Tap one — its text is appended to the draft."]
+             ("Threads append to a chosen tweet." if is_thread
+              else "Tap one — its text is appended to the draft.")]
     rows: list[list[InlineKeyboardButton]] = []
     if not templates:
         lines.append("")
         lines.append("<i>No templates saved yet. Use /template → ➕ Add New.</i>")
-    for t in templates:
-        rows.append([InlineKeyboardButton(t.name,
-                                          callback_data=f"tpl:use:{token}:{t.id}")])
+    elif is_thread:
+        rows.append([InlineKeyboardButton(
+            f"📋 Choose template ({len(templates)}) → pick tweet",
+            callback_data=f"tpl:tpick:{token}")])
+    else:
+        for t in templates:
+            rows.append([InlineKeyboardButton(t.name,
+                                              callback_data=f"tpl:use:{token}:{t.id}")])
     rows.append([InlineKeyboardButton("↩️ Back", callback_data=f"d:{token}:back")])
     kb = InlineKeyboardMarkup(rows)
     html = "\n".join(lines)
@@ -104,9 +116,21 @@ async def _render_picker(bot, chat_id: int, post_id: int, rss: bool,
 
 async def _inject(context: ContextTypes.DEFAULT_TYPE, chat_id: int,
                   post_id: int, tpl_id: int, rss: bool) -> None:
-    """Append a template's content to a post's raw text and re-render the preview."""
+    """Append a template's content to a post's raw text and re-render the preview.
+
+    Thread drafts are routed to the per-tweet injection helper — appending to
+    post.content alone would never reach the ThreadTweet rows that actually get
+    published.
+    """
     from utils.ui import update_preview
 
+    if crud.get_thread(post_id) is not None:
+        from handlers.drafts import inject_template_to_thread
+
+        # default target: tweet 1 (thread builder card offers explicit per-tweet
+        # picking via d:<id>:tpick:<tpl_id>)
+        await inject_template_to_thread(context, chat_id, post_id, tpl_id, 0)
+        return
     post = crud.get_post(post_id)
     tpl = crud.get_template(tpl_id)
     if post is None:
@@ -198,6 +222,34 @@ async def template_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         context.user_data["tpl_inject_from"] = {"post_id": post_id, "rss": rss,
                                                 "message_id": msg_id}
         await _render_picker(context.bot, chat_id, post_id, rss)
+        return
+
+    if head == "tpick":  # thread drafts: step 1 — pick the template
+        post_id, rss = _parse_token(parts[2])
+        templates = crud.get_templates()
+        token = _token(post_id, rss)
+        rows = [[InlineKeyboardButton(t.name,
+                                      callback_data=f"tpl:tuse:{token}:{t.id}")
+                 ] for t in templates]
+        rows.append([InlineKeyboardButton("↩️ Back", callback_data=f"d:{token}:back")])
+        await cq.edit_message_text(
+            "📋 Which template should be appended to a thread tweet?",
+            reply_markup=InlineKeyboardMarkup(rows))
+        return
+
+    if head == "tuse":  # thread drafts: step 2 — pick the target tweet
+        post_id, rss = _parse_token(parts[2])
+        tpl_id = int(parts[3])
+        th = crud.get_thread(post_id)
+        n = len(th.tweets) if th is not None else 0
+        token = _token(post_id, rss)
+        rows = [[InlineKeyboardButton(f"📋 Tweet {i + 1}",
+                                      callback_data=f"d:{token}:tuse:{tpl_id}:{i}")
+                 for i in range(n)][j:j + 3] for j in range(0, n, 3)]
+        rows.append([InlineKeyboardButton("↩️ Back", callback_data=f"d:{token}:back")])
+        await cq.edit_message_text(
+            "📋 Append this template to which tweet?",
+            reply_markup=InlineKeyboardMarkup(rows))
         return
 
     if head == "use":
