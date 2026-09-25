@@ -161,3 +161,64 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     from handlers.drafts import new_draft_message
 
     await new_draft_message(update, context, caption, media_path=path)
+
+
+# ------------------------------------------------- inline editor callbacks --
+
+async def editor_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handles ed_save:<id>, ed_cancel:<id> and custom_time:<token>:<date_iso>."""
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
+    cq = update.callback_query
+    await cq.answer()
+    if not is_admin(update):
+        return
+    parts = cq.data.split(":")
+    head = parts[0]
+    chat_id = update.effective_chat.id
+
+    if head == "ed_save":
+        post_id = int(parts[1])
+        rss = len(parts) > 2 and parts[2] == "r"
+        draft = context.user_data.get("edit_draft", {}).get(str(post_id))
+        post = crud.get_post(post_id)
+        if post is None:
+            await cq.edit_message_text("ℹ️ Post not found.")
+            return
+        if draft:
+            post = crud.update_post(post_id, content=draft)
+            context.user_data.get("edit_draft", {}).pop(str(post_id), None)
+        n = effective_length(post.content or "")
+        extra = (f"💾 <b>Saved</b> · {n}/{config.X_CHAR_LIMIT} chars"
+                 + (" ⚠️ over limit!" if n > config.X_CHAR_LIMIT else ""))
+        context.user_data.pop("flow", None)
+        await update_preview(context, chat_id, post, text_extra=extra, rss=rss)
+        return
+
+    if head == "ed_cancel":
+        post_id = int(parts[1])
+        rss = len(parts) > 2 and parts[2] == "r"
+        context.user_data.pop("flow", None)
+        context.user_data.get("edit_draft", {}).pop(str(post_id), None)
+        post = crud.get_post(post_id)
+        if post is None:
+            await cq.edit_message_text("ℹ️ Post not found.")
+            return
+        await update_preview(context, chat_id, post, text_extra="↩️ Edit cancelled.", rss=rss)
+        return
+
+    if head == "custom_time":
+        token, date_iso = parts[1], parts[2]
+        from_queue = token.startswith("q")
+        post_id = int(token[1:] if from_queue else token)
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton(
+            "⏱ +30 min", callback_data=f"quick:{token}:30"),
+            InlineKeyboardButton("📅 Calendar", callback_data=f"cal:{token}:open"),
+            InlineKeyboardButton("↩️ Cancel", callback_data=f"d:{post_id}:back")]])
+        context.user_data["flow"] = ("custom_time", post_id, date_iso, from_queue)
+        await cq.edit_message_text(
+            "🕐 Send a custom time:\n"
+            "• <code>HH:MM</code> (for the selected day)\n"
+            "• <code>YYYY-MM-DD HH:MM</code>",
+            reply_markup=kb, parse_mode="HTML")
+        return

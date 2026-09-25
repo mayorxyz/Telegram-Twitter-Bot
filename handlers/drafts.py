@@ -48,13 +48,68 @@ async def push_rss_draft(bot, post) -> None:
     crud.update_post(post.id, tg_message_id=sent.message_id)
 
 
+STATS_UNAVAILABLE_TEXT = (
+    "📊 Stats: X API Free Tier does not support view/impression metrics. "
+    "Upgrade to Basic tier to enable."
+)
+
+
 async def draft_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handles every callback on a draft preview card (prefix 'd:')."""
+    """Handles d:, tag:, dup:, f: and st: callbacks on draft/preview cards."""
     cq = update.callback_query
     await cq.answer()
     if not is_admin(update):
         return
-    parts = cq.data.split(":")            # d:<token>:<action>[:<arg>]
+    parts = cq.data.split(":")            # <head>:<token>:<action>[:<arg>]
+
+    # ---- st:<post_id> — tweet stats ------------------------------------------
+    if parts[0] == "st":
+        post_id = int(parts[1])
+        post = crud.get_post(post_id)
+        if post is None:
+            await cq.answer("Post not found", show_alert=True)
+            return
+        stats = None
+        if post.tweet_id:
+            from utils.twitter import get_tweet_stats
+
+            try:
+                stats = get_tweet_stats(post.tweet_id)
+            except Exception:
+                stats = None
+        if stats:
+            await cq.answer(
+                f"👁 {stats.get('views', 0):,} · 💬 {stats.get('replies', 0)} · "
+                f"🔁 {stats.get('retweets', 0)} · ❤️ {stats.get('likes', 0)}",
+                show_alert=True)
+        else:
+            await cq.message.reply_text(STATS_UNAVAILABLE_TEXT)
+        return
+
+    # ---- f:<post_id>:<retry|editretry|discard> — failure actions --------------
+    if parts[0] == "f":
+        await _failure_action(update, context, int(parts[1]), parts[2])
+        return
+
+    # ---- bare tag:<post_id>:<tag> / dup:<post_id> aliases ---------------------
+    if parts[0] == "tag":
+        post = crud.get_post(int(parts[1]))
+        if post is None:
+            await cq.edit_message_text("ℹ️ This draft no longer exists.")
+            return
+        post = crud.update_post(post.id, tag=parts[2])
+        await update_preview(context, update.effective_chat.id, post,
+                             text_extra=f"🏷 Tagged <code>{parts[2]}</code>")
+        return
+    if parts[0] == "dup":
+        clone = crud.duplicate_post(int(parts[1]))
+        if clone is None:
+            await cq.edit_message_text("ℹ️ Source post no longer exists.")
+            return
+        await show_preview(context, update.effective_chat.id, clone,
+                           text_extra=f"🔁 <b>Duplicated from #{parts[1]}</b>")
+        return
+
     rss_flag, post_id = _is_rss(parts[1])
     action = parts[2]
     chat_id = update.effective_chat.id
@@ -115,3 +170,35 @@ async def draft_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             pass
     elif action == "back":
         await update_preview(context, chat_id, post, rss=rss_flag)
+
+
+async def _failure_action(update: Update, context: ContextTypes.DEFAULT_TYPE,
+                          post_id: int, action: str) -> None:
+    """f:<post_id>:<retry|editretry|discard> — actions on the failure notice card."""
+    cq = update.callback_query
+    chat_id = update.effective_chat.id
+    post = crud.get_post(post_id)
+    if post is None:
+        await cq.edit_message_text("ℹ️ Post not found.")
+        return
+
+    if action == "retry":
+        from scheduler.publisher import publish_post
+
+        await cq.edit_message_text(f"🔁 Retrying post #{post_id}…")
+        await publish_post(context.application, post_id, manual=True)
+    elif action == "editretry":
+        from handlers.editor import start_editing
+
+        await start_editing(update, context, post, rss=False)
+    elif action == "discard":
+        from scheduler.jobs import unschedule_post_job
+
+        unschedule_post_job(post_id)
+        crud.delete_post(post_id)
+        try:
+            await cq.edit_message_text("🗑 Discarded.")
+        except Exception:
+            pass
+    else:
+        await cq.answer("Unknown action", show_alert=True)

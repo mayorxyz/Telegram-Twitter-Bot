@@ -101,6 +101,13 @@ def reschedule_post_job(post_id: int, when_utc_aware: datetime) -> None:
 
 # --------------------------------------------------------------- bootstrap -
 
+async def reset_rss_count() -> None:
+    """Midnight job: zero the RSS daily-draft counter."""
+    from db.crud import set_setting
+
+    set_setting("rss_count_today", "0")
+
+
 def bootstrap(application) -> AsyncIOScheduler:
     """Attach PTB app, restore jobs from DB, register recurring jobs, start scheduler."""
     scheduler.application = application  # type: ignore[attr-defined]
@@ -122,6 +129,9 @@ def bootstrap(application) -> AsyncIOScheduler:
     scheduler.add_job(rss_poll_job, "interval", minutes=interval,
                       id="rss_poll", replace_existing=True,
                       next_run_time=now)  # first poll right after boot
+
+    scheduler.add_job(reset_rss_count, "cron", hour=0, minute=0,
+                      id="rss_reset", replace_existing=True)
     if not scheduler.running:
         scheduler.start()
     log.info("scheduler started; %d scheduled posts restored", crud.count_posts("scheduled"))

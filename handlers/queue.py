@@ -1,7 +1,8 @@
-"""Queue view: paginated scheduled/draft list with per-item actions + undo delete."""
+"""Queue view: paginated scheduled/draft list with per-item actions + 10s undo delete."""
 from __future__ import annotations
 
 import logging
+import time
 from datetime import timezone
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
@@ -12,11 +13,12 @@ from scheduler.jobs import unschedule_post_job
 from utils import config
 from utils.formatting import escape_html
 from utils.timeutil import to_admin_tz
-from utils.ui import is_admin, pop_undo, stash_for_undo
+from utils.ui import is_admin
 
 log = logging.getLogger(__name__)
 
 PAGE_SIZE = 5
+UNDO_WINDOW_SECONDS = 10
 
 
 def _queue_keyboard(post_id: int) -> InlineKeyboardMarkup:
@@ -35,7 +37,7 @@ def _queue_keyboard(post_id: int) -> InlineKeyboardMarkup:
 async def render_queue(bot, chat_id: int, page: int = 0,
                        message_id: int | None = None) -> int | None:
     """Render one queue page. Edits in place when message_id given."""
-    posts = [p for p in crud.list_posts(("scheduled", "draft"))]
+    posts = crud.list_posts(("scheduled", "draft"))
     total_pages = max(1, (len(posts) + PAGE_SIZE - 1) // PAGE_SIZE)
     page = max(0, min(page, total_pages - 1))
     chunk = posts[page * PAGE_SIZE:(page + 1) * PAGE_SIZE]
@@ -59,7 +61,6 @@ async def render_queue(bot, chat_id: int, page: int = 0,
             when = " 📝 draft"
         tag = f" 🏷{p.tag}" if p.tag else ""
         lines.append(f"<b>#{p.id}</b>{when}{tag} · {snippet}")
-        rows.append([InlineKeyboardButton(f"#{p.id}", callback_data=f"q:view:{p.id}")])
         r = []
         for label, cb in (
             ("✏️", f"q:ed:{p.id}"),
@@ -86,7 +87,7 @@ async def render_queue(bot, chat_id: int, page: int = 0,
                                         text=html, reply_markup=kb, parse_mode="HTML")
             return message_id
         except Exception:
-            pass
+            log.debug("queue edit failed, sending fresh page")
     sent = await bot.send_message(chat_id=chat_id, text=html, reply_markup=kb, parse_mode="HTML")
     return sent.message_id
 
@@ -100,16 +101,73 @@ async def queue_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     await render_queue(context.bot, update.effective_chat.id, page=0)
 
 
-async def q_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handles q:* callbacks (pagination, edit, reschedule, delete, confirm, undo)."""
+# ------------------------------------------------------------- internals ---
+
+def _pending(context: ContextTypes.DEFAULT_TYPE) -> dict[int, float]:
+    """bot_data-backed pending_delete map: post_id -> deletion timestamp."""
+    return context.bot_data.setdefault("pending_delete", {})
+
+
+def _stash(post, when_utc: timezone | None = None) -> None:
+    """Full column snapshot so we can restore the exact row after undo."""
+    from db.models import Post
+
+    data = {c.name: getattr(post, c.name) for c in Post.__table__.columns}
+    _undo_snapshots[post.id] = data
+
+
+_undo_snapshots: dict[int, dict] = {}
+
+
+def _restore(post_id: int) -> bool:
+    data = _undo_snapshots.pop(post_id, None)
+    if data is None:
+        return False
+    from db.models import Post
+
+    with crud.get_session() as s:
+        s.merge(Post(**data))
+        s.commit()
+    return True
+
+
+async def _render_page0(context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> None:
+    await render_queue(context.bot, chat_id, page=0)
+
+
+# --------------------------------------------------------------- callback --
+
+async def queue_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handles q:* pagination/item actions plus del_confirm:, del_undo:, post_now:, now:."""
     cq = update.callback_query
     await cq.answer()
     if not is_admin(update):
         return
-    parts = cq.data.split(":")           # q:<action>:<arg>
-    action, arg = parts[1], parts[2]
+
     chat_id = update.effective_chat.id
-    msg_id = cq.message.message_id
+    msg_id = cq.message.message_id if cq.message else None
+    parts = cq.data.split(":")
+    head = parts[0]
+
+    # ---- top-level aliases registered outside the q: namespace --------------
+    if head in ("del_confirm", "del_undo"):
+        await _handle_delete_step(update, context, head, int(parts[1]))
+        return
+
+    if head in ("now", "post_now"):
+        from scheduler.publisher import publish_post
+
+        post_id = int(parts[1])
+        await cq.edit_message_text(f"⚡ Publishing #{post_id}…")
+        await publish_post(context.application, post_id, manual=True)
+        await _render_page0(context, chat_id)
+        return
+
+    if head != "q":
+        return
+
+    action = parts[1]
+    arg = parts[2] if len(parts) > 2 else ""
 
     if action == "p":
         page = 0 if arg == "-1" else int(arg)
@@ -120,7 +178,6 @@ async def q_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         if post is None:
             await render_queue(context.bot, chat_id, message_id=msg_id)
             return
-        # open the full preview card for this post (draft actions apply)
         from utils.ui import show_preview
 
         fresh = crud.update_post(post.id, tg_message_id=None)
@@ -129,6 +186,7 @@ async def q_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     elif action == "ed":
         post = crud.get_post(int(arg))
         if post is None:
+            await cq.edit_message_text("ℹ️ Post not found.")
             return
         await start_editing_cq(update, context, post)
 
@@ -139,16 +197,59 @@ async def q_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
     elif action == "del":
         post_id = int(arg)
+        _pending(context)[post_id] = time.time()
         kb = InlineKeyboardMarkup([[
-            InlineKeyboardButton("✅ Yes", callback_data=f"dy:{post_id}"),
-            InlineKeyboardButton("❌ No", callback_data="q:p:-1"),
+            InlineKeyboardButton("✅ Confirm Delete", callback_data=f"del_confirm:{post_id}"),
+            InlineKeyboardButton("↩️ Undo", callback_data=f"del_undo:{post_id}"),
         ]])
         await cq.edit_message_text(
-            f"🗑 Delete post #{post_id}? This removes it from the queue.",
+            f"🗑 Delete post #{post_id}? Undo window: {UNDO_WINDOW_SECONDS} s.",
             reply_markup=kb)
 
     elif action == "back":
         await render_queue(context.bot, chat_id, message_id=msg_id)
+
+
+async def _handle_delete_step(update: Update, context: ContextTypes.DEFAULT_TYPE,
+                              step: str, post_id: int) -> None:
+    """del_confirm:<id> / del_undo:<id> — 10s window stored in context.bot_data."""
+    cq = update.callback_query
+    chat_id = update.effective_chat.id
+    pending = _pending(context)
+    ts = pending.get(post_id)
+    expired = ts is None or (time.time() - ts) >= UNDO_WINDOW_SECONDS
+
+    if step == "del_confirm":
+        if expired:
+            await cq.edit_message_text("⏱ Undo window expired.")
+        else:
+            post = crud.get_post(post_id)
+            if post is not None:
+                _stash(post)
+                unschedule_post_job(post_id)
+                crud.delete_post(post_id)
+            pending.pop(post_id, None)
+            await cq.edit_message_text("🗑 Deleted.")
+        await _render_page0(context, chat_id)
+        return
+
+    # step == "del_undo"
+    if expired:
+        await cq.edit_message_text("⏱ Undo window expired.")
+        await _render_page0(context, chat_id)
+        return
+    pending.pop(post_id, None)
+    if _restore(post_id):
+        post = crud.get_post(post_id)
+        if post is not None and post.status == "scheduled" and post.scheduled_at:
+            from scheduler.jobs import schedule_post_job
+
+            when = post.scheduled_at
+            if when.tzinfo is None:
+                when = when.replace(tzinfo=timezone.utc)
+            schedule_post_job(post_id, when)
+    await cq.edit_message_text("↩️ Restored.")
+    await _render_page0(context, chat_id)
 
 
 async def start_editing_cq(update: Update, context: ContextTypes.DEFAULT_TYPE, post) -> None:
@@ -156,64 +257,3 @@ async def start_editing_cq(update: Update, context: ContextTypes.DEFAULT_TYPE, p
     from handlers.editor import start_editing
 
     await start_editing(update, context, post, rss=False)
-
-
-# ---------------------------------------------------- delete confirm/undo ---
-
-async def dy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """dy:<post_id> → delete + offer 10s undo."""
-    cq = update.callback_query
-    await cq.answer()
-    if not is_admin(update):
-        return
-    post_id = int(cq.data.split(":")[1])
-    post = crud.get_post(post_id)
-    if post is None:
-        await cq.edit_message_text("ℹ️ Already gone.")
-        return
-    stash_for_undo(post)
-    unschedule_post_job(post_id)
-    crud.delete_post(post_id)
-
-    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-
-    kb = InlineKeyboardMarkup([[InlineKeyboardButton("↩️ Undo", callback_data=f"un:{post_id}")]])
-    await cq.edit_message_text(
-        f"🗑 Deleted post #{post_id}. <i>Undo available for 10 s.</i>",
-        reply_markup=kb, parse_mode="HTML")
-
-    async def expire(_ctx: ContextTypes.DEFAULT_TYPE):
-        try:
-            await context.bot.edit_message_reply_markup(
-                chat_id=cq.message.chat_id, message_id=cq.message.message_id,
-                reply_markup=None)
-        except Exception:
-            pass
-
-    context.job_queue.run_once(expire, when=10)
-
-
-async def un_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """un:<post_id> → restore within undo window."""
-    cq = update.callback_query
-    await cq.answer()
-    if not is_admin(update):
-        return
-    post_id = int(cq.data.split(":")[1])
-    snapshot = pop_undo(post_id)
-    if snapshot is None:
-        await cq.edit_message_text("⌛ Undo window expired.")
-        return
-    from db.models import Post
-
-    with crud.get_session() as s:
-        merged = s.merge(Post(**{c: getattr(snapshot, c) for c in (
-            "id", "content", "media_path", "status", "scheduled_at", "published_at",
-            "tag", "auto_format", "tg_message_id", "tweet_id", "error")}))
-        merged.created_at = snapshot.created_at
-        s.commit()
-    if snapshot.status == "scheduled" and snapshot.scheduled_at:
-        from handlers.scheduler_flow import rearm_job
-
-        rearm_job(post_id)
-    await cq.edit_message_text(f"↩️ Restored post #{post_id}.")
