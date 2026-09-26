@@ -1,0 +1,350 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>X Poster Dashboard</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --panel: #161b22;
+    --panel-2: #1c2129;
+    --border: #30363d;
+    --text: #e6edf3;
+    --muted: #8b949e;
+    --draft: #8b949e;
+    --scheduled: #58a6ff;
+    --published: #3fb950;
+    --failed: #f85149;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 14px/1.5 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  header {
+    position: sticky; top: 0; z-index: 5;
+    display: flex; flex-wrap: wrap; align-items: baseline; gap: 12px;
+    padding: 14px 20px;
+    background: rgba(13, 17, 23, .93);
+    border-bottom: 1px solid var(--border);
+    backdrop-filter: blur(6px);
+  }
+  header h1 { margin: 0; font-size: 16px; font-weight: 600; letter-spacing: .2px; }
+  #meta { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+  #banner {
+    margin: 12px 20px 0; padding: 10px 12px;
+    border: 1px solid var(--failed); border-radius: 8px;
+    background: rgba(248, 81, 73, .08);
+    color: var(--failed); font-size: 13px;
+  }
+  main { padding: 16px 20px 40px; }
+  section { margin: 0 0 26px; }
+  section h2 {
+    display: flex; align-items: center; gap: 8px;
+    margin: 0 0 10px;
+    font-size: 12px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: .09em;
+    color: var(--muted);
+  }
+  section h2 .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+  section h2 .count {
+    padding: 0 7px; border: 1px solid var(--border); border-radius: 999px;
+    font-size: 11px; color: var(--text); background: var(--panel);
+  }
+  .grid { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); }
+  .card {
+    padding: 12px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--border);
+    border-radius: 8px;
+  }
+  .card .top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+  .card .id { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+  .badge {
+    padding: 0 8px; border-radius: 999px;
+    border: 1px solid currentColor;
+    background: var(--panel-2);
+    font-size: 11px; font-weight: 600; text-transform: lowercase;
+  }
+  .chip {
+    padding: 0 7px; border-radius: 6px; font-size: 11px;
+    background: var(--panel-2); border: 1px solid var(--border); color: var(--muted);
+  }
+  .card .body { white-space: pre-wrap; word-break: break-word; }
+  .card .body.empty { color: var(--muted); font-style: italic; }
+  .card .foot {
+    display: flex; gap: 12px; flex-wrap: wrap;
+    margin-top: 9px; font-size: 12px; color: var(--muted);
+  }
+  .card .foot a { color: var(--scheduled); text-decoration: none; }
+  .card .foot a:hover { text-decoration: underline; }
+  .err {
+    margin-top: 9px; padding: 7px 9px;
+    border: 1px solid rgba(248, 81, 73, .5); border-radius: 6px;
+    background: rgba(248, 81, 73, .08); color: var(--failed);
+    font-size: 12px; white-space: pre-wrap; word-break: break-word;
+  }
+  .tweets { display: none; margin-top: 10px; padding-top: 9px; border-top: 1px dashed var(--border); }
+  .tweets.open { display: block; }
+  .tw { display: flex; gap: 9px; padding: 6px 0; font-size: 13px; }
+  .tw + .tw { border-top: 1px solid var(--panel-2); }
+  .tw .n {
+    flex: none; width: 20px; height: 20px; border-radius: 50%;
+    display: grid; place-items: center;
+    background: var(--panel-2); border: 1px solid var(--border);
+    font-size: 11px; color: var(--muted);
+  }
+  .tw .txt { white-space: pre-wrap; word-break: break-word; }
+  .muted { color: var(--muted); }
+  .empty-section { color: var(--muted); font-size: 12px; font-style: italic; }
+  [data-clickable] { cursor: pointer; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🛰 X Poster Dashboard</h1>
+  <span id="meta">connecting…</span>
+</header>
+<div id="banner" hidden></div>
+<main id="sections"></main>
+
+<script>
+"use strict";
+
+const API = "http://127.0.0.1:3000/api/posts";
+const POLL_MS = 3000;
+const PREVIEW_CHARS = 140;
+const SECTIONS = [
+  { key: "draft",     label: "Draft" },
+  { key: "scheduled", label: "Scheduled" },
+  { key: "published", label: "Published" },
+  { key: "failed",    label: "Failed" },
+];
+
+const sectionsEl = document.getElementById("sections");
+const metaEl = document.getElementById("meta");
+const bannerEl = document.getElementById("banner");
+
+const cards = new Map();     // post id -> { el, sig }
+const expanded = new Set();  // post ids whose thread tweets are open
+let latest = [];             // last good payload (used by the thread toggle)
+let failures = 0;
+
+/* ---------------------------------------------------------------- helpers -- */
+
+function el(tag, cls, text) {
+  const node = document.createElement(tag);
+  if (cls) node.className = cls;
+  if (text !== undefined && text !== null) node.textContent = text;
+  return node;
+}
+
+function color(key) {
+  return "var(--" + key + ", var(--muted))";
+}
+
+function labelFor(key) {
+  const known = SECTIONS.find(s => s.key === key);
+  if (known) return known.label;
+  return key.charAt(0).toUpperCase() + key.slice(1);
+}
+
+function fmtLocal(date) {
+  if (Number.isNaN(date.getTime())) return "invalid date";
+  return date.toLocaleString(undefined, {
+    year: "numeric", month: "short", day: "2-digit",
+    hour: "2-digit", minute: "2-digit",
+  });
+}
+
+function tweetUrl(id) {
+  return "https://x.com/i/web/status/" + encodeURIComponent(id);
+}
+
+function toggleThread(id) {
+  if (expanded.has(id)) expanded.delete(id);
+  else expanded.add(id);
+  render(latest);
+}
+
+function signature(post) {
+  return JSON.stringify([
+    post.status, post.content, post.tag, post.scheduled_at,
+    post.tweet_id, post.error, post.is_thread, post.tweets,
+    expanded.has(post.id),
+  ]);
+}
+/* ------------------------------------------------------------ card build -- */
+
+function buildCard(post) {
+  const card = el("div", "card");
+  card.dataset.id = String(post.id);
+  card.style.borderLeftColor = color(post.status);
+
+  const top = el("div", "top");
+  top.appendChild(el("span", "id", "#" + post.id));
+  const badge = el("span", "badge", post.status || "unknown");
+  badge.style.color = color(post.status);
+  top.appendChild(badge);
+  if (post.tag) top.appendChild(el("span", "chip", "#" + post.tag));
+  if (post.is_thread) {
+    const chip = el("span", "chip", "🧵 " + post.tweets.length + " tweets");
+    chip.title = "click to expand";
+    top.appendChild(chip);
+  }
+  card.appendChild(top);
+
+  const raw = post.content || "";
+  const short = raw.length > PREVIEW_CHARS ? raw.slice(0, PREVIEW_CHARS) + "…" : raw;
+  const body = el("div", "body" + (raw ? "" : " empty"), raw ? short : "(no text)");
+  if (raw.length > PREVIEW_CHARS) body.title = raw;
+  card.appendChild(body);
+
+  const foot = el("div", "foot");
+  if (post.scheduled_at) {
+    foot.appendChild(el("span", null, "🗓 " + fmtLocal(new Date(post.scheduled_at))));
+  }
+  if (post.status === "published" && post.tweet_id) {
+    const link = el("a", null, "↗ tweet " + post.tweet_id);
+    link.href = tweetUrl(post.tweet_id);
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    foot.appendChild(link);
+  }
+  if (foot.childNodes.length) card.appendChild(foot);
+
+  if (post.status === "failed" && post.error) {
+    card.appendChild(el("div", "err", "⚠ " + post.error));
+  }
+
+  if (post.is_thread) {
+    const box = el("div", "tweets" + (expanded.has(post.id) ? " open" : ""));
+    post.tweets.forEach(tweet => {
+      const row = el("div", "tw");
+      row.appendChild(el("span", "n", String((tweet.position || 0) + 1)));
+      const txt = el("div", "txt", tweet.content || "(media only)");
+      const media = (tweet.media_ids || []).length;
+      if (media) txt.appendChild(el("span", "muted", (tweet.content ? "\n" : "") +
+                                                      "📎 " + media + " media"));
+      row.appendChild(txt);
+      box.appendChild(row);
+    });
+    card.appendChild(box);
+    top.dataset.clickable = "1";
+    body.dataset.clickable = "1";
+    top.addEventListener("click", () => toggleThread(post.id));
+    body.addEventListener("click", () => toggleThread(post.id));
+  }
+  return card;
+}
+
+function ensureSection(key) {
+  let section = document.getElementById("sec-" + key);
+  if (!section) {
+    section = el("section");
+    section.id = "sec-" + key;
+    const head = el("h2");
+    const dot = el("span", "dot");
+    dot.style.background = color(key);
+    head.appendChild(dot);
+    head.appendChild(el("span", "lbl", labelFor(key)));
+    head.appendChild(el("span", "count", "0"));
+    section.appendChild(head);
+    section.appendChild(el("div", "grid"));
+    sectionsEl.appendChild(section);
+  }
+  return section;
+}
+
+/* ----------------------------------------------------------- DOM updates -- */
+
+function render(posts) {
+  latest = posts;
+  const groups = new Map();
+  posts.forEach(post => {
+    const key = post.status || "unknown";
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(post);
+  });
+
+  const order = SECTIONS.map(section => section.key);
+  groups.forEach((_ignored, key) => { if (!order.includes(key)) order.push(key); });
+
+  order.forEach(key => {
+    const list = groups.get(key) || [];
+    const section = ensureSection(key);
+    const head = section.querySelector("h2");
+    head.querySelector(".dot").style.background = color(key);
+    head.querySelector(".lbl").textContent = labelFor(key);
+    head.querySelector(".count").textContent = String(list.length);
+
+    const grid = section.querySelector(".grid");
+    const keep = list.map(post => {
+      const entry = cards.get(post.id);
+      const sig = signature(post);
+      if (entry && entry.sig === sig) return entry.el;  // unchanged -> reuse node
+      if (entry) entry.el.remove();
+      const node = buildCard(post);
+      cards.set(post.id, { el: node, sig });
+      return node;
+    });
+
+    if (list.length) {
+      const placeholder = grid.querySelector(".empty-section");
+      if (placeholder) placeholder.remove();
+    }
+
+    // drop nodes whose post changed status or was deleted
+    Array.from(grid.children).forEach(child => {
+      if (child.classList.contains("empty-section")) return;
+      if (keep.includes(child)) return;
+      const id = Number(child.dataset.id);
+      const entry = cards.get(id);
+      if (entry && entry.el === child) cards.delete(id);
+      child.remove();
+    });
+
+    // appendChild moves existing nodes, so order stays right without rebuilding
+    keep.forEach(node => grid.appendChild(node));
+    if (!grid.children.length) grid.appendChild(el("div", "empty-section", "nothing here"));
+  });
+}
+
+/* --------------------------------------------------------------- polling -- */
+
+async function poll() {
+  try {
+    const res = await fetch(API, { cache: "no-store" });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const posts = await res.json();
+    if (!Array.isArray(posts)) throw new Error("unexpected payload");
+    render(posts);
+    failures = 0;
+    bannerEl.hidden = true;
+    metaEl.textContent = "updated " + new Date().toLocaleTimeString() + " · " +
+      posts.length + (posts.length === 1 ? " post" : " posts");
+  } catch (err) {
+    failures += 1;
+    bannerEl.hidden = false;
+    bannerEl.textContent = "⚠ Cannot reach " + API + " (" +
+      (err && err.message ? err.message : err) + ")" +
+      (failures > 1 ? " — " + failures + " failed polls" : "") +
+      ". Is the bot running (python main.py)?";
+    metaEl.textContent = "disconnected";
+  }
+}
+
+poll();
+setInterval(poll, POLL_MS);
+document.addEventListener("visibilitychange", () => { if (!document.hidden) poll(); });
+
+</script>
+</body>
+</html>
+

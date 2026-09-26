@@ -3,9 +3,10 @@
 A thread is stored as a Thread row (1:1 with a Post) plus ThreadTweet rows.
 Media is attached per tweet via the "attach slot" flow:
 
-    th:media:<post_id>:<position>   -> arm context.user_data['th_attach']
-    (admin sends photo/video)       -> file downloaded into that tweet's media_ids
-    th:rmm:<post_id>:<position>     -> remove one file from a tweet
+    th:mpick:<post_id>              -> prompt to send media
+    (admin sends photo/video)       -> file downloaded, prompts for target tweet
+    thm:<post_id>:<position>        -> attaches media to selected tweet
+    th:rmm:<post_id>:<slot_index>   -> remove one file from a tweet
     th:set:<post_id>:<position>     -> replace one tweet's text inline
     th:add / th:rm:<post_id>:<pos>  -> append / drop tweets (max 25, min 2)
 
@@ -17,6 +18,7 @@ import logging
 import os
 import re
 import uuid
+from datetime import datetime, timezone
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
@@ -66,17 +68,21 @@ def _action_keyboard(post_id: int) -> InlineKeyboardMarkup:
 
 
 async def _show_builder(context: ContextTypes.DEFAULT_TYPE, chat_id: int, post,
-                        note: str = "") -> None:
+                        note: str = "", force_new_message: bool = False) -> None:
     """Re-render the builder card for a thread draft."""
     tweets = _tweets_of(post)
     html = _render_tweets(tweets)
     if note:
         html = f"{note}\n\n{html}"
+    
     rows: list[list[InlineKeyboardButton]] = [[
         InlineKeyboardButton("✅ Done — preview draft", callback_data=f"th:done:{post.id}"),
+        InlineKeyboardButton("🚀 Post Now", callback_data=f"th:postnow:{post.id}"),
     ]]
-    kb = InlineKeyboardMarkup(rows + _action_keyboard(post.id).inline_keyboard)
-    if post.tg_message_id:
+    kb = InlineKeyboardMarkup(rows + list(_action_keyboard(post.id).inline_keyboard))
+    
+    # FIX: If force_new_message is True, always send a new message
+    if not force_new_message and post.tg_message_id:
         try:
             await context.bot.edit_message_text(chat_id=chat_id, message_id=post.tg_message_id,
                                                 text=html, reply_markup=kb, parse_mode="HTML")
@@ -84,6 +90,7 @@ async def _show_builder(context: ContextTypes.DEFAULT_TYPE, chat_id: int, post,
         except Exception:
             crud.update_post(post.id, tg_message_id=None)
             post.tg_message_id = None
+            
     sent = await context.bot.send_message(chat_id=chat_id, text=html,
                                           reply_markup=kb, parse_mode="HTML")
     crud.update_post(post.id, tg_message_id=sent.message_id)
@@ -105,23 +112,19 @@ def _save(context: ContextTypes.DEFAULT_TYPE, post_id: int,
 # ----------------------------------------------------------------- commands -
 
 async def thread_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Start a new thread draft.
-
-    Usage:
-        /thread                                  → empty 2-tweet builder
-        /thread line1 --- line2 --- …            → seed tweets (split on '---')
-        /thread with "tweet one" "tweet two"     → same, but quotes allow '|' inside text
-    """
+    """Start a new thread draft."""
     from utils.ui import deny
 
     if not is_admin(update):
         await deny(update, context)
         return
+        
     raw = " ".join(context.args or []).strip()
     if raw.startswith("with "):
         parts = [p.strip() for p in re.findall(r'"([^"]+)"', raw)]
     else:
         parts = [x.strip() for x in raw.split("---") if x.strip()]
+        
     if not parts:
         parts = ["", ""]
     if len(parts) > crud.MAX_THREAD_TWEETS:
@@ -135,9 +138,13 @@ async def thread_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                             auto_format=crud.get_bool("auto_format", True))
     crud.create_thread(post.id, [{"content": c, "media_ids": []} for c in parts])
     context.user_data.pop("th_flow", None)
+    context.user_data.pop("th_attach", None)
+    
     await _show_builder(context, update.effective_chat.id, post,
                         note="🧵 <b>New thread</b> — add tweets, then attach media to any tweet.")
 
+
+# ------------------------------------------------------------- text input --
 
 # ------------------------------------------------------------- text input --
 
@@ -162,11 +169,22 @@ async def handle_thread_input(update: Update, context: ContextTypes.DEFAULT_TYPE
         if len(tweets) >= crud.MAX_THREAD_TWEETS:
             await msg.reply_text(f"⚠️ Max {crud.MAX_THREAD_TWEETS} tweets per thread reached.")
             return True
-        tweets.append({"content": text, "media_ids": []})
+        
+        # FIX: Fill empty tweets first before appending
+        empty_idx = next((i for i, t in enumerate(tweets) if not t["content"].strip() and not t["media_ids"]), None)
+        if empty_idx is not None:
+            tweets[empty_idx]["content"] = text
+            note = f"✏️ Tweet {empty_idx + 1} filled."
+        else:
+            tweets.append({"content": text, "media_ids": []})
+            note = f"➕ Tweet {len(tweets)} added."
+        
         context.user_data.pop("th_flow", None)
         _save(context, post_id, tweets)
-        await _show_builder(context, chat_id, crud.get_post(post_id),
-                            note=f"➕ Tweet {len(tweets)} added.")
+        
+        # FIX: Send a NEW reply with the updated builder card
+        fresh_post = crud.get_post(post_id)
+        await _show_builder(context, chat_id, fresh_post, note=note, force_new_message=True)
         return True
 
     if kind == "set":
@@ -184,8 +202,9 @@ async def handle_thread_input(update: Update, context: ContextTypes.DEFAULT_TYPE
         tweets[pos]["content"] = text
         context.user_data.pop("th_flow", None)
         _save(context, post_id, tweets)
-        await _show_builder(context, chat_id, crud.get_post(post_id),
-                            note=f"✏️ Tweet {pos + 1} updated.")
+        
+        fresh_post = crud.get_post(post_id)
+        await _show_builder(context, chat_id, fresh_post, note=f"✏️ Tweet {pos + 1} updated.", force_new_message=True)
         return True
 
     return False
@@ -221,45 +240,61 @@ async def handle_thread_media(update: Update, context: ContextTypes.DEFAULT_TYPE
     flow = context.user_data.get("th_attach")
     if not flow or not update.message:
         return False
-    post_id, pos = flow
+    
     msg = update.message
     chat_id = msg.chat.id
-    post = crud.get_post(post_id)
-    if post is None or crud.get_thread(post_id) is None:
-        context.user_data.pop("th_attach", None)
-        await msg.reply_text("ℹ️ That thread no longer exists.")
-        return True
-    tweets = _tweets_of(post)
-    if not (0 <= pos < len(tweets)):
-        context.user_data.pop("th_attach", None)
-        await msg.reply_text("ℹ️ That tweet position is gone.")
-        return True
-    if len(tweets[pos]["media_ids"]) >= crud.MAX_MEDIA_PER_TWEET:
-        await msg.reply_text(f"⚠️ Tweet {pos + 1} already has "
-                             f"{crud.MAX_MEDIA_PER_TWEET} media files (X limit).")
-        return True
-
-    media = msg.photo[-1] if msg.photo else (
-        msg.video if msg.video else (msg.document if msg.document else None))
-    if media is None:
-        await msg.reply_text("❌ Send a photo or video.")
-        return True
-    if msg.photo is None:
-        doc = getattr(media, "file_name", None)
-        mime = getattr(media, "mime_type", None)
-        if doc is None and mime is None:
-            await msg.reply_text("❌ Send a photo or video (mp4/mov).")
+    
+    # Step 1: User sent media, now ask which tweet to attach it to
+    if flow[0] == "awaiting_media":
+        post_id = flow[1]
+        post = crud.get_post(post_id)
+        if post is None or crud.get_thread(post_id) is None:
+            context.user_data.pop("th_attach", None)
+            await msg.reply_text("ℹ️ That thread no longer exists.")
             return True
-        path = await download_telegram_file(context, media.file_id, doc, mime)
-    else:
-        path = await download_telegram_file(context, media.file_id)
-
-    tweets[pos]["media_ids"].append(path)
-    _save(context, post_id, tweets)
-    context.user_data.pop("th_attach", None)
-    await _show_builder(context, chat_id, crud.get_post(post_id),
-                        note=f"📎 Attached to tweet {pos + 1}.")
-    return True
+            
+        media = msg.photo[-1] if msg.photo else (
+            msg.video if msg.video else (msg.document if msg.document else None))
+        if media is None:
+            await msg.reply_text("❌ Send a photo or video.")
+            return True
+            
+        if msg.photo is None:
+            doc = getattr(media, "file_name", None)
+            mime = getattr(media, "mime_type", None)
+            if doc is None and mime is None:
+                await msg.reply_text("❌ Send a photo or video (mp4/mov).")
+                return True
+            path = await download_telegram_file(context, media.file_id, doc, mime)
+        else:
+            path = await download_telegram_file(context, media.file_id)
+            
+        # Move to next step: awaiting target tweet selection
+        context.user_data["th_attach"] = ("awaiting_target", post_id, path)
+        tweets = _tweets_of(post)
+        
+        buttons = [
+            InlineKeyboardButton(
+                f"🖼 Tweet {i + 1} ({len(tweets[i]['media_ids'])}/{crud.MAX_MEDIA_PER_TWEET})",
+                callback_data=f"thm:{post_id}:{i}")
+            for i in range(len(tweets))
+        ]
+        rows = [buttons[j:j + 2] for j in range(0, len(buttons), 2)]
+        rows.append([InlineKeyboardButton("❌ Cancel", callback_data=f"th:cancel_attach:{post_id}")])
+        
+        # FIX: Delete the "send photo" prompt message
+        try:
+            await msg.delete()
+        except Exception:
+            pass
+        
+        await msg.reply_text(
+            "📎 <b>Which tweet should this be attached to?</b>",
+            reply_markup=InlineKeyboardMarkup(rows),
+            parse_mode="HTML")
+        return True
+        
+    return False
 
 
 # --------------------------------------------------------------- callbacks --
@@ -293,22 +328,50 @@ async def thread_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await _show_builder(context, chat_id, crud.get_post(post_id), note=note)
         return
 
-    # ---- thm:<post_id>:<position> — pick target tweet for next upload -------
+    # ---- thm:<post_id>:<position> — attach media to selected tweet ----------
+    # In thread_callback, fix the thm: action to delete the selection message:
+
+    # ---- thm:<post_id>:<position> — attach media to selected tweet ----------
     if data.startswith("thm:"):
         parts = data.split(":")
         post_id = int(parts[1])
         pos = int(parts[2])
+        
+        flow = context.user_data.get("th_attach")
+        if not flow or flow[0] != "awaiting_target":
+            await cq.answer("ℹ️ Attach flow expired or cancelled.", show_alert=True)
+            return
+            
+        _, _, temp_path = flow
         post = crud.get_post(post_id)
         if post is None:
             await cq.edit_message_text("ℹ️ This draft no longer exists.")
             return
-        context.user_data["th_attach"] = (post_id, pos)
-        await context.bot.send_message(
-            chat_id=chat_id,
-            text=(f"📤 Now send the photo/video for tweet <b>{pos + 1}</b>.\n"
-                  f"(up to {crud.MAX_MEDIA_PER_TWEET} files per tweet; "
-                  f"currently {len(_tweets_of(post)[pos]['media_ids'])})"),
-            parse_mode="HTML")
+            
+        tweets = _tweets_of(post)
+        if not (0 <= pos < len(tweets)):
+            await cq.answer("ℹ️ That tweet position is gone.", show_alert=True)
+            return
+            
+        if len(tweets[pos]["media_ids"]) >= crud.MAX_MEDIA_PER_TWEET:
+            await cq.answer(f"⚠️ Tweet {pos + 1} already has {crud.MAX_MEDIA_PER_TWEET} media files.", show_alert=True)
+            return
+            
+        tweets[pos]["media_ids"].append(temp_path)
+        _save(context, post_id, tweets)
+        context.user_data.pop("th_attach", None)
+        
+        # FIX: Delete the selection message
+        try:
+            await cq.edit_message_text("✅ Media attached successfully.")
+        except Exception:
+            pass
+        
+        # Send updated builder as a new message
+        fresh_post = crud.get_post(post_id)
+        await _show_builder(context, chat_id, fresh_post, 
+                            note=f"📎 Attached to tweet {pos + 1}.", 
+                            force_new_message=True)
         return
 
     if not data.startswith("th:"):
@@ -322,11 +385,42 @@ async def thread_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
     tweets = _tweets_of(post)
 
+    # ---- postnow: finalize and schedule immediately -------------------------
+
+    # ---- postnow: finalize and schedule immediately -------------------------
+    if action == "postnow":
+        if len(tweets) < 2:
+            await cq.answer("Threads need at least 2 tweets.", show_alert=True)
+            return
+        empties = [i for i, t in enumerate(tweets) if not t["content"].strip() and not t["media_ids"]]
+        if empties:
+            await cq.answer(f"Tweet(s) {', '.join(str(i + 1) for i in empties)} are empty.", show_alert=True)
+            return
+            
+        crud.reset_thread_tweet_state(post_id)
+        fresh = crud.update_post(post_id, content=tweets[0]["content"], tg_message_id=None)
+        
+        # FIX: Go through preview flow which will trigger the publish
+        await show_preview(context, chat_id, fresh,
+                           text_extra="🚀 <b>Thread ready to post</b> — confirm to publish now:")
+        return
+
+    # ---- cancel_attach: clean up temp file and return to builder ------------
+    if action == "cancel_attach":
+        flow = context.user_data.get("th_attach")
+        if flow and flow[0] == "awaiting_target":
+            try:
+                os.remove(flow[2])
+            except Exception:
+                pass
+        context.user_data.pop("th_attach", None)
+        await _show_builder(context, chat_id, post, note="ℹ️ Attach cancelled.")
+        return
+
     # ---- done: persist + hand over to the normal draft preview -------------
     if action == "done":
         if len(tweets) < 2:
-            await cq.answer("Threads need at least 2 tweets — add one first.",
-                            show_alert=True)
+            await cq.answer("Threads need at least 2 tweets — add one first.", show_alert=True)
             return
         empties = [i for i, t in enumerate(tweets)
                    if not t["content"].strip() and not t["media_ids"]]
@@ -334,13 +428,8 @@ async def thread_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             await cq.answer(f"Tweet(s) {', '.join(str(i + 1) for i in empties)} "
                             f"are empty — set text or attach media first.", show_alert=True)
             return
-        # Keep per-tweet rows authoritative (media is attached per tweet!).
-        # Only mirror tweet 1 onto post.content so queue/preview snippets stay
-        # meaningful; merging all tweets into one blob would make the publisher
-        # re-serialize the whole thread as a single oversized tweet.
         crud.reset_thread_tweet_state(post_id)
-        fresh = crud.update_post(post_id, content=tweets[0]["content"],
-                                 tg_message_id=None)
+        fresh = crud.update_post(post_id, content=tweets[0]["content"], tg_message_id=None)
         await show_preview(context, chat_id, fresh,
                            text_extra="🧵 <b>Thread draft ready</b> — confirm, edit or cancel:")
         return
@@ -348,8 +437,7 @@ async def thread_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     # ---- add tweet ----------------------------------------------------------
     if action == "add":
         if len(tweets) >= crud.MAX_THREAD_TWEETS:
-            await cq.answer(f"Max {crud.MAX_THREAD_TWEETS} tweets per thread.",
-                            show_alert=True)
+            await cq.answer(f"Max {crud.MAX_THREAD_TWEETS} tweets per thread.", show_alert=True)
             return
         context.user_data["th_flow"] = ("add", post_id)
         await cq.edit_message_text("🆕 Send the text for the next tweet "
@@ -384,15 +472,10 @@ async def thread_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await cq.edit_message_text(f"✏️ Send the new text for tweet {pos + 1}.")
         return
 
-    # ---- media pickers -------------------------------------------------------
+    # ---- media pickers (reversed flow: send media first, then pick tweet) ---
     if action == "mpick":
-        rows = [[InlineKeyboardButton(
-            f"🖼 Tweet {i + 1} ({len(t['media_ids'])}/{crud.MAX_MEDIA_PER_TWEET})",
-            callback_data=f"thm:{post_id}:{i}")
-            for i in range(len(tweets))][j:j + 2]
-            for j in range(0, len(tweets), 2)]
-        rows.append([InlineKeyboardButton("↩️ Back", callback_data=f"th:menu:{post_id}")])
-        await cq.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup(rows))
+        context.user_data["th_attach"] = ("awaiting_media", post_id)
+        await cq.edit_message_text("📤 Send the photo/video you want to attach to the thread.")
         return
 
     if action == "rmpick":
@@ -401,7 +484,6 @@ async def thread_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             await cq.answer("No media attached yet.", show_alert=True)
             return
         from utils.ui import thread_remove_media_keyboard
-
         await cq.edit_message_text(
             "🗑 Tap a file to detach it from its tweet (you can then send a replacement).",
             reply_markup=thread_remove_media_keyboard(post_id, slots))

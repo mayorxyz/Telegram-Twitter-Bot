@@ -1,9 +1,3 @@
-"""Entry point: build the PTB application, wire handlers, bootstrap APScheduler.
-
-Solo-use bot — ADMIN_ID is enforced inside each handler (utils.ui.is_admin).
-All state lives in SQLite so the bot survives restarts; on startup every
-status=scheduled post is re-armed as an APScheduler date job.
-"""
 from __future__ import annotations
 
 import logging
@@ -11,10 +5,10 @@ import os
 from datetime import timezone
 
 from dotenv import load_dotenv
+load_dotenv()  # ← must be before config is read
 
-load_dotenv()
-
-from telegram.ext import (  # noqa: E402
+from telegram import BotCommand
+from telegram.ext import (
     Application,
     CallbackQueryHandler,
     CommandHandler,
@@ -22,22 +16,55 @@ from telegram.ext import (  # noqa: E402
     filters,
 )
 
-from db import crud  # noqa: E402
-from db.database import init_db  # noqa: E402
-from handlers import (  # noqa: E402
-    drafts,
-    editor,
-    queue,
-    report,
-    scheduler_flow,
-    settings,
-    templates,
-    threads,
-)
-from scheduler import jobs  # noqa: E402
-from utils import config  # noqa: E402
+from db import crud
+from db.database import init_db
+from handlers import drafts, editor, queue, report, scheduler_flow, settings, templates, threads
+from scheduler import jobs
+from utils import config
 
 log = logging.getLogger(__name__)
+
+
+async def post_init(application: Application) -> None:
+    """Set up bot commands, seed settings, repopulate scheduler, and start dashboard."""
+    
+    # 1. Set up bot commands menu
+    commands = [
+        BotCommand("start", "Start the bot"),
+        BotCommand("help", "Show help"),
+        BotCommand("draft", "Create a new tweet draft"),
+        BotCommand("thread", "Create a new thread"),
+        BotCommand("queue", "View scheduled posts"),
+        BotCommand("pause", "Pause/resume posting"),
+        BotCommand("report", "View posting statistics"),
+        BotCommand("settings", "Bot settings"),
+    ]
+    await application.bot.set_my_commands(commands)
+    log.info("Bot command menu set.")
+
+    # 2. Seed default settings and repopulate the scheduler from the DB.
+    if not crud.get_setting("timezone"):
+        crud.set_setting("timezone", config.TIMEZONE or "UTC")
+    if crud.get_setting("auto_format", "") == "":
+        crud.set_bool("auto_format", True)
+    if crud.get_setting("paused", "") == "":
+        crud.set_bool("paused", False)
+    if not crud.get_setting("rss_url") and config.RSS_URL:
+        crud.set_setting("rss_url", config.RSS_URL)
+
+    for post in crud.scheduled_posts():
+        if post.scheduled_at is None:
+            continue
+        when = post.scheduled_at
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=timezone.utc)
+        jobs.schedule_post_job(post.id, when)
+    log.info("startup reload: %d scheduled posts re-armed", crud.count_posts("scheduled"))
+
+    # 3. Start read-only local dashboard
+    from web.server import start_dashboard
+    start_dashboard()
+    log.info("Dashboard running at http://localhost:%s", config.DASHBOARD_PORT or 3000)
 
 
 async def ingest_text(update, context) -> None:
@@ -95,27 +122,6 @@ async def ingest_video(update, context) -> None:
     await threads.handle_thread_media(update, context)
 
 
-async def on_startup(app: Application) -> None:
-    """Seed default settings and repopulate the scheduler from the DB."""
-    if not crud.get_setting("timezone"):
-        crud.set_setting("timezone", config.TIMEZONE or "UTC")
-    if crud.get_setting("auto_format", "") == "":
-        crud.set_bool("auto_format", True)
-    if crud.get_setting("paused", "") == "":
-        crud.set_bool("paused", False)
-    if not crud.get_setting("rss_url") and config.RSS_URL:
-        crud.set_setting("rss_url", config.RSS_URL)
-
-    for post in crud.scheduled_posts():
-        if post.scheduled_at is None:
-            continue
-        when = post.scheduled_at
-        if when.tzinfo is None:
-            when = when.replace(tzinfo=timezone.utc)
-        jobs.schedule_post_job(post.id, when)
-    log.info("startup reload: %d scheduled posts re-armed", crud.count_posts("scheduled"))
-
-
 def build_application() -> Application:
     token = os.getenv("BOT_TOKEN", config.BOT_TOKEN)
     if not token:
@@ -123,7 +129,8 @@ def build_application() -> Application:
     if not config.ADMIN_ID:
         raise SystemExit("ADMIN_ID is not set — copy .env.example to .env and fill it in.")
 
-    app = Application.builder().token(token).build()
+    # Build the app and attach post_init directly in the builder
+    app = Application.builder().token(token).post_init(post_init).build()
 
     # ---- command handlers (registered before generic callbacks/messages) ----
     app.add_handler(CommandHandler("start", settings.start_command))
@@ -146,9 +153,7 @@ def build_application() -> Application:
 
     # ---- inline keyboard callbacks -------------------------------------------
     # Registration order matters: PTB dispatches to the FIRST handler whose
-    # pattern matches. Patterns below are mutually exclusive — no callback_data
-    # string can match two of them (verified against every button in utils/ui.py,
-    # handlers/*.py). Do not reorder without re-checking prefixes.
+    # pattern matches. Patterns below are mutually exclusive.
     # 1) Draft cards: d:<id>:<action>, tag:, dup:, f: (failure actions), st: (stats)
     app.add_handler(CallbackQueryHandler(drafts.draft_callback, pattern=r"^(d|tag|dup|f|st):"))
     # 2) Calendar/time picker + immediate publish from cards: cal:, day:, hr:, mn:, now:, quick:
@@ -167,12 +172,8 @@ def build_application() -> Application:
     # 7) Templates management + injection into drafts: tpl:  (no conflict with t:)
     app.add_handler(CallbackQueryHandler(templates.template_callback, pattern=r"^tpl:"))
     # 8) Thread builder buttons: th: and thm: per-tweet media picker.
-    #    NOTE: registered as ^th(m)?: instead of ^t: because threads.py emits
-    #    callback_data like "th:add:<id>" / "thm:<id>:<slot>"; a bare ^t: pattern
-    #    would never match them and could shadow any future single-letter prefix.
     app.add_handler(CallbackQueryHandler(threads.thread_callback, pattern=r"^th(m)?:"))
 
-    app.post_init = on_startup
     return app
 
 

@@ -15,10 +15,12 @@ TWITTER_API_SECRET: str = os.environ.get("TWITTER_API_SECRET", "")
 TWITTER_ACCESS_TOKEN: str = os.environ.get("TWITTER_ACCESS_TOKEN", "")
 TWITTER_ACCESS_SECRET: str = os.environ.get("TWITTER_ACCESS_SECRET", "")
 TWITTER_BEARER_TOKEN: str = os.environ.get("TWITTER_BEARER_TOKEN", "")
+DRY_RUN: bool = os.environ.get("DRY_RUN", "0").lower() in {"1", "true", "yes"}
 
 RSS_URL: str = os.environ.get("RSS_URL", "")
 RSS_MAX_PER_DAY: int = int(os.environ.get("RSS_MAX_PER_DAY", "5"))
 RSS_POLL_MINUTES: int = int(os.environ.get("RSS_POLL_MINUTES", "30"))
+DASHBOARD_PORT: int = int(os.environ.get("DASHBOARD_PORT", "3000"))
 
 TIMEZONE: str = os.environ.get("TIMEZONE", "UTC")
 

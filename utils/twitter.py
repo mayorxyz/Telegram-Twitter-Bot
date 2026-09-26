@@ -69,9 +69,10 @@ def _guess_mime(path: str) -> str:
     """MIME type from file extension (used for video chunked uploads)."""
     return _MIME_BY_EXT.get(os.path.splitext(path)[1].lower(), "application/octet-stream")
 
-
 def upload_media(media_path: str) -> str:
     """Upload one image/video and return its media_id_string (Free-tier safe)."""
+    if config.DRY_RUN:
+        return "dryrun-media-0000"
     if not config.twitter_configured():
         raise PublishError("Twitter credentials are not configured in .env")
     if not media_path or not os.path.exists(media_path):
@@ -86,8 +87,6 @@ def upload_media(media_path: str) -> str:
         return uploaded.media_id_string
     except Exception as exc:
         log.exception("media upload failed for %s", media_path)
-        # Re-raise raw tweepy errors so the publisher's 429 detector still sees
-        # them; wrap everything else.
         if isinstance(exc, tweepy.TweepyException):
             raise
         raise PublishError(f"Media upload failed: {exc}") from exc
@@ -106,6 +105,10 @@ def publish_tweet(text: str, media_paths: list[str] | None = None,
     - Raises immediately if `done_ids` already contains `position` so callers
       can't double-post a completed thread step.
     """
+    if config.DRY_RUN:
+        import random
+        log.info("[DRY RUN] would publish: %s", text)
+        return f"dryrun-{random.randint(1000,9999)}"
     if not config.twitter_configured():
         raise PublishError("Twitter credentials are not configured in .env")
     if done_ids is not None and position is not None and position in done_ids:

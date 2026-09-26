@@ -1,2 +1,17 @@
 __pycache__/
 data/jobs.db
+
+# --- secrets: never commit real values (the template lives in .env.example) ---
+.env
+.env.*
+!.env.example
+
+# --- local runtime artifacts ---
+data/*.db
+data/*.db-shm
+data/*.db-wal
+.venv/
+venv/
+node_modules/
+logs/
+*.log
