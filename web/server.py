@@ -3,7 +3,12 @@
 Solo-use helper. Binds localhost only and has no authentication — it renders the
 same rows the Telegram admin already sees in chat (drafts, queue, failures), for
 quick eyeballing in a browser while the bot is polling. It is started from
-main.on_startup() on a daemon thread so it can never block the polling loop.
+``main.post_init()`` on a daemon thread so it can never block the polling loop,
+and stopped from ``main.post_shutdown()`` via :func:`stop_dashboard`.
+
+The listen address comes from ``utils/config.py`` (``DASHBOARD_HOST`` /
+``DASHBOARD_PORT``, default ``127.0.0.1:3000``), so the bot's startup log line and
+this server always agree.
 
 Routes
     GET /            -> web/static/index.html (the dashboard page)
@@ -32,11 +37,14 @@ from sqlalchemy.orm import selectinload
 
 from db.database import DB_PATH, SessionLocal
 from db.models import Post, Thread
+from utils import config
 
 log = logging.getLogger(__name__)
 
-HOST = os.environ.get("DASHBOARD_HOST", "127.0.0.1")
-PORT = int(os.environ.get("DASHBOARD_PORT", "8080"))
+# Single source of truth: utils/config.py reads DASHBOARD_HOST / DASHBOARD_PORT,
+# so the bot's log line and this server can never disagree (see README §12.3).
+HOST = config.DASHBOARD_HOST
+PORT = config.DASHBOARD_PORT
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 INDEX_FILE = os.path.join(STATIC_DIR, "index.html")
 
@@ -170,15 +178,38 @@ def start_dashboard(host: str = HOST, port: int = PORT) -> ThreadingHTTPServer |
             return _server  # already running
         try:
             server = ThreadingHTTPServer((host, port), DashboardHandler)
-        except OSError:
-            log.exception("dashboard: cannot bind %s:%s — skipping", host, port)
+        except OSError as exc:
+            log.warning("dashboard: cannot bind %s:%s (%s) — the bot keeps running "
+                        "without the dashboard; change DASHBOARD_PORT if another "
+                        "service owns that port", host, port, exc)
             return None
         server.daemon_threads = True  # in-flight polls die with the process
         threading.Thread(target=server.serve_forever, name="dashboard-http",
                          daemon=True).start()
         _server = server
-    log.info("dashboard: read-only UI at http://%s:%s", host, port)
+        bound_host, bound_port = server.server_address[:2]
+    log.info("dashboard: read-only UI at http://%s:%s", bound_host, bound_port)
     return _server
+
+
+def stop_dashboard() -> None:
+    """Stop the dashboard server; safe to call when it never started.
+
+    Called from ``main.post_shutdown()`` so Ctrl-C closes the socket instead of
+    leaving it to the OS. Must not be called from the dashboard's own thread.
+    """
+    global _server
+    with _lock:
+        server, _server = _server, None
+    if server is None:
+        return
+    try:
+        server.shutdown()
+        server.server_close()
+    except Exception:
+        log.exception("dashboard: shutdown failed")
+    else:
+        log.info("dashboard: stopped")
 
 
 if __name__ == "__main__":
@@ -193,5 +224,7 @@ if __name__ == "__main__":
         threading.Event().wait()  # serve_forever() runs in the daemon thread
     except KeyboardInterrupt:
         pass
+    finally:
+        stop_dashboard()
 
 

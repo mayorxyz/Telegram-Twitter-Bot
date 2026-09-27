@@ -1,4 +1,3 @@
-```markdown
 # Telegram-to-X Automation Bot
 
 A single-user (solo) Telegram bot that drafts, schedules, and publishes content to X/Twitter via the API v2 Free Tier. Content is composed in Telegram chat, reviewed as preview cards with inline buttons, queued in SQLite, and fired on time by APScheduler. Supports single tweets with media, multi-tweet threads with per-tweet media attachment, RSS auto-drafts, reusable text templates, a global pause kill switch, and local health reporting.
@@ -33,11 +32,12 @@ A single-user (solo) Telegram bot that drafts, schedules, and publishes content 
 │                              #   registers all handlers, bootstraps scheduler, run_polling()
 ├── requirements.txt           # Pinned dependencies
 ├── .env.example               # Configuration template (copy to .env)
-├── .gitignore                 # Ignores __pycache__/, data/jobs.db, etc.
+├── .gitignore                 # Ignores .env, __pycache__/, data/, logs/
 ├── README.md                  # This document
-├── data/                      # Runtime artifacts (created automatically)
+├── data/                      # Runtime artifacts (created automatically; not committed)
 │   ├── bot.db                 #   Main SQLite database (posts/settings/templates/threads)
 │   ├── jobs.db                #   APScheduler persistent job store
+│   ├── bot.lock               #   Single-instance lock (OS-held; pid written after byte 0)
 │   └── media/                 #   Downloaded Telegram photos/videos staged for upload
 ├── db/
 │   ├── __init__.py            # Package marker
@@ -65,9 +65,20 @@ A single-user (solo) Telegram bot that drafts, schedules, and publishes content 
 │   │                          #   idempotent bootstrap(application)
 │   └── publisher.py           # publish_post(): single & thread publishing, rate-limit backoff,
 │                              #   failure notifications with Retry/Edit&Retry/Discard
+├── scripts/                   # Dev-only smoke checks (no network, no credentials)
+│   ├── check_single_instance.py  # Second instance refused / bypass / release
+│   ├── check_conflict_policy.py  # Token preflight + 409 policy (stubbed bot)
+│   └── check_dashboard.py        # Dashboard start/stop/port-busy + HTTP routes
+├── web/
+│   ├── __init__.py            # Package marker
+│   ├── server.py              # Read-only local dashboard (stdlib HTTP, localhost:3000)
+│   │                          #   start_dashboard()/stop_dashboard(), JSON + static UI
+│   └── static/
+│       └── index.html         # Dashboard front end (drafts/queue/failures view)
 └── utils/
     ├── __init__.py            # Package marker
     ├── config.py              # Reads env vars into typed module constants
+    ├── single_instance.py     # One-poller-per-token guard: OS lock on data/bot.lock
     ├── twitter.py             # tweepy wrappers: upload_media, publish_tweet, thread chaining
     ├── formatting.py          # Markdown→plain-text stripping, effective_length (280), HTML escape
     ├── generator.py           # Deterministic non-LLM "regenerate" variants (hooks/CTAs)
@@ -146,7 +157,11 @@ All variables are read once at import time by `utils/config.py` (via python-dote
 | `RSS_MAX_PER_DAY`                             | no       | `5`              | Cap on RSS-generated drafts per calendar day                            | `5`                      |
 | `RSS_POLL_MINUTES`                            | no       | `30`             | Poll interval (floored at 5 minutes)                                    | `30`                     |
 | `DB_PATH`                                     | no       | `./data/bot.db`  | Override location of the main SQLite DB                                 | `/var/lib/xposter/bot.db` |
-| `MEDIA_DIR`                                   | no       | `./data/media`   | Where Telegram downloads are staged before upload                       | `/srv/media`             |
+| `MEDIA_DIR`                                   | no       | `./data/media`   | Where Telegram downloads are staged before upload. The single-instance lock file `bot.lock` is created in this folder's parent (`data/`) | `/srv/media`   |
+| `DASHBOARD_HOST`                              | no       | `127.0.0.1`      | Interface the read-only dashboard binds to                              | `127.0.0.1`              |
+| `DASHBOARD_PORT`                              | no       | `3000`           | Dashboard port; if busy the bot logs a warning and keeps polling        | `3000`                   |
+| `ALLOW_MULTI_INSTANCE`                        | no       | unset            | `1`/`true` bypasses the single-instance lock (debug boots only)         | `1`                      |
+| `CONFLICT_ABORT_AFTER`                        | no       | `10`             | Consecutive 409 conflicts tolerated before the bot logs and stops cleanly (`0` = warn forever, never stop) | `10` |
 
 **Runtime-mutable settings** (stored in the `settings` table, changed via UI, not `.env`): `timezone`, `paused`, `auto_format`, `rss_url`, `rss_count_today`, and per-link RSS dedupe keys.
 
@@ -159,12 +174,15 @@ python main.py
 **Startup sequence:**
 
 1. `load_dotenv()` reads `.env`; logging is configured (httpx noise suppressed).
-2. `init_db()` creates/verifies all tables (`Base.metadata.create_all`).
-3. `Application.builder().token(BOT_TOKEN).build()` constructs the PTB app.
-4. Handlers register in fixed order: commands → photo/text `MessageHandler`s → pattern-scoped `CallbackQueryHandler`s (drafts → scheduler → queue → delete steps → editor → settings → templates → threads). Patterns are mutually exclusive; ordering prevents shadowing.
-5. `app.post_init = on_startup`: seeds missing `timezone` / `auto_format` / `paused` / `rss_url` settings and re-arms every `status="scheduled"` post as a scheduler date job.
-6. `jobs.bootstrap(app)` attaches the application to the scheduler (guarded by `_bootstrapped` so it cannot double-start), restores/validates jobs from `data/jobs.db`, catches up missed publishes, registers `rss_poll` (interval) and `rss_reset` (cron 00:00), then starts the `AsyncIOScheduler`.
-7. `app.run_polling(drop_pending_updates=True)` begins long-polling. Ctrl-C stops cleanly.
+2. `single_instance.acquire_default()` takes an exclusive OS lock on `data/bot.lock`. A second live instance logs the holder's PID and exits with code 2 instead of starting a doomed second poller (see §12).
+3. `init_db()` creates/verifies all tables (`Base.metadata.create_all`).
+4. `Application.builder().token(BOT_TOKEN)` constructs the PTB app with `post_init`/`post_shutdown` hooks, then `add_error_handler` classifies polling errors (409 `Conflict`, timeouts, network blips).
+5. Handlers register in fixed order: commands → photo/text `MessageHandler`s → pattern-scoped `CallbackQueryHandler`s (drafts → scheduler → queue → delete steps → editor → settings → templates → threads). Patterns are mutually exclusive; ordering prevents shadowing.
+6. `post_init` runs the **token preflight**: it clears any leftover webhook, then probes `getUpdates` once — a `Conflict` here aborts startup with one actionable line instead of minutes of retry noise.
+7. `post_init` seeds missing `timezone` / `auto_format` / `paused` / `rss_url` settings, re-arms every `status="scheduled"` post as a scheduler date job, and starts the read-only dashboard on `DASHBOARD_PORT` (default `3000`).
+8. `jobs.bootstrap(app)` attaches the application to the scheduler (guarded by `_bootstrapped` so it cannot double-start), restores/validates jobs from `data/jobs.db`, catches up missed publishes, registers `rss_poll` (interval) and `rss_reset` (cron 00:00), then starts the `AsyncIOScheduler`.
+9. `app.run_polling(drop_pending_updates=True)` begins long-polling.
+10. Ctrl-C triggers `post_shutdown`: scheduler stopped, dashboard socket closed, `data/bot.lock` released (the OS releases it on any exit path, including crashes).
 
 For production use behind supervision, e.g.:
 
@@ -246,8 +264,99 @@ All state transitions above are written to SQLite synchronously, so a crash betw
 - **Paused pipeline:** `/pause` freezes publishing and RSS drafting globally; nothing is dropped — everything waits in the DB and re-arms on `/resume`.
 - **Non-admin traffic:** Rejected in every handler before any DB write.
 - **Duplicate RSS items:** Link-hash dedupe keys in settings prevent re-drafting the same article across restarts.
+- **Telegram 409 `Conflict`:** Classified by the global error handler, not dumped as a traceback: the first occurrence logs the single actionable hint, every 10th repeats a short warning, and a streak lasting `CONFLICT_ABORT_AFTER` (default 10) consecutive conflicts stops the bot cleanly so a supervisor can restart it after the cause is fixed. A quiet gap of 2 minutes resets the streak.
+- **Invalid or revoked `BOT_TOKEN`:** Aborts startup *before* polling with one line (`Telegram rejected BOT_TOKEN …`) and exit code 1 — no traceback. Fix `BOT_TOKEN` in `.env` (see §12.2).
+- **Another local instance running:** Refused at startup with the holder's PID and exit code 2 (see §12.2).
+- **Startup exit codes:** `0` normal stop, `1` preflight/startup failure (token or conflict detected), `2` single-instance lock held by another live process.
 
-## 12. Known Limitations
+## 12. Troubleshooting
+
+### 12.1 `409 Conflict: terminated by other getUpdates request`
+
+**Symptom.** The log repeats *"Conflict: terminated by other getUpdates request"* while the bot looks alive, and messages are answered late, twice, or not at all.
+
+**Cause.** Telegram routes `getUpdates` to exactly **one** consumer per bot token. A second consumer makes *both* sessions conflict; PTB retries forever, so the log floods while polling is effectively dead.
+
+**Likely culprits, most common first:**
+
+1. A second copy of this bot is running (another terminal, a leftover process after a crash, a second machine).
+2. Another project/deployment reuses the same `BOT_TOKEN` — the token is the identity, not the folder.
+3. A webhook was set on the token (e.g. by another tool); webhooks and `getUpdates` are mutually exclusive. `post_init` clears it automatically at startup, so a webhook set *after* boot is the dangerous case.
+4. The token was shared (screenshot, chat, commit) and someone else is polling it.
+
+**Find the local twin (Windows PowerShell):**
+
+```powershell
+Get-CimInstance Win32_Process -Filter "Name='python.exe'" |
+  Select-Object ProcessId, CommandLine |
+  Where-Object { $_.CommandLine -like '*main.py*' }
+```
+
+**Find the local twin (Linux/macOS):**
+
+```bash
+ps -ef | grep '[m]ain.py'
+```
+
+Then stop all but one (`Stop-Process -Id <pid>` / `kill <pid>`).
+
+**Check for a webhook** (empty `url` = fine):
+
+```bash
+curl "https://api.telegram.org/bot$BOT_TOKEN/getWebhookInfo"
+```
+
+Delete it with:
+
+```bash
+curl "https://api.telegram.org/bot$BOT_TOKEN/deleteWebhook?drop_pending_updates=false"
+```
+
+**If the token ever leaked:** open @BotFather → `/mybots` → *API Token* → **Revoke current token**, then update `BOT_TOKEN` in `.env` and on the one legitimate deployment. Revoking is the only fix — the leaked token cannot be "secured" while someone else polls it.
+
+**Built-in protections (already in this repo):**
+
+| Layer | Behavior |
+|-------|----------|
+| Local lock | `data/bot.lock` is locked with an exclusive OS lock at startup. A second local instance logs the holder's PID and exits with code **2** before touching Telegram. Crashes leave no stale lock — the OS releases it. |
+| Token preflight | `post_init` deletes any webhook and probes `getUpdates` once. An active remote poller aborts startup immediately with an actionable message instead of retry noise. |
+| Error classification | Runtime 409s log one hint (then every 10th), and stop the process cleanly after `CONFLICT_ABORT_AFTER` (default 10) consecutive conflicts. |
+| Escape hatch | `ALLOW_MULTI_INSTANCE=1` skips the local lock for a deliberate short-lived debug boot. It does **not** make Telegram accept two pollers — expect 409s while both run. |
+
+**Verify the fix.** With one instance running, the log shows `single-instance lock held (...bot.lock)` and no 409s for several minutes; sending `/start` gets exactly one reply. Starting `python main.py` again prints the "another instance ... is already running (pid=...)" message and exits 2.
+
+### 12.2 `python main.py` exits immediately with code 2 (or 1)
+
+- **Exit code 2 — another instance holds the lock.** The message names the holder's PID. Stop that process, or set `ALLOW_MULTI_INSTANCE=1` for an intentional parallel debug boot.
+- **Exit code 1 — startup preflight failed.** The single logged line says which: `Telegram rejected BOT_TOKEN …` (revoked/mistyped/whitespace-padded token, or one whose whitespace/quoting in `.env` broke it — the value must be exactly `123456:AAH…`) or `409 Conflict …` (a twin is polling the token; see §12.1).
+
+### 12.3 Dashboard not reachable on `http://127.0.0.1:3000`
+
+- Look for `dashboard: cannot bind 127.0.0.1:3000` in the log — another service owns the port. Change `DASHBOARD_PORT` in `.env` (the bot itself keeps polling without the dashboard).
+- Confirm the port in the log line `Dashboard running at http://127.0.0.1:<port>`; both the log line and the server read `utils/config.DASHBOARD_HOST`/`DASHBOARD_PORT`, so they cannot disagree.
+- The dashboard is read-only and deliberately bound to localhost with no authentication — never expose it to a network.
+
+### 12.4 X/Twitter publish failures
+
+See §11: 429s are re-queued automatically (+15 min); auth/validation/network failures are marked `failed` with retry, edit-and-retry, and discard actions in chat.
+
+### 12.5 Smoke-check the hardening (no credentials needed)
+
+Both checks are offline — they stub `telegram.Bot` and only touch `data/bot.lock`:
+
+```bash
+python scripts/check_single_instance.py   # lock refusal, bypass, release, lock bytes
+python scripts/check_conflict_policy.py   # preflight + 409/InvalidToken classification
+python scripts/check_dashboard.py         # start/stop, port-busy warning, HTTP routes
+```
+
+Each prints one line per check and ends with `RESULT: ALL CHECKS PASSED` (exit code 0).
+
+### 12.6 Reset local state
+
+Stopping the bot is always safe: everything durable lives in SQLite. To start over, stop the bot and delete `data/bot.db*` and `data/jobs.db*` (this drops all posts, templates, and settings); `data/bot.lock` can be deleted too — it is recreated on the next start and holds no state.
+
+## 13. Known Limitations
 
 - **Free Tier caps:** ~500 writes/month (hard monthly ceiling — the bot cannot see or enforce it beyond backoff), 1 posted tweet per user per 24h for signups without verified org binding depending on current tier terms, media upload limits apply per tweet (≤4 images or ≤1 video/clip). No engagement metrics — 📊 Stats is intentionally a stub message.
 - **Thread resumption gap:** Retrying a partially published thread currently republishes from scratch rather than continuing from the last successful tweet id (duplicate risk if the first tweets landed).
@@ -257,7 +366,7 @@ All state transitions above are written to SQLite synchronously, so a crash betw
 - **SQLite single-writer:** Adequate for solo use; not designed for multiple concurrent bot instances sharing one DB file.
 - **Minor:** Calendar cursor state is per-process memory (cosmetic only); RSS first poll runs at boot which can produce bursts if the feed has many unseen items (bounded by `RSS_MAX_PER_DAY`).
 
-## 13. Future Enhancements (ranked by value)
+## 14. Future Enhancements (ranked by value)
 
 1. **Thread-aware retry/resume** — Persist last published tweet id per `ThreadTweet` and continue chains on retry instead of reposting (eliminates the duplicate-post edge case).
 2. **Monthly write-quota tracker** — Count publishes locally against the Free-Tier ceiling and warn at 80/100%.
@@ -268,5 +377,4 @@ All state transitions above are written to SQLite synchronously, so a crash betw
 7. **Export/import** — `/export` the DB as CSV/JSON for archival; `/import` templates.
 8. **Multi-account posting** — Map several credential sets to tags (blocked today by single OAuth pair).
 9. **Draft expiry policy** — Auto-archive stale drafts older than N days.
-10. **Tests + CI** — pytest suite around `crud`, `publisher` (mocked tweepy), and callback dispatch; GitHub Actions lint/type-check.
-```
+10. **Tests + CI** — pytest suite around `crud`, `publisher` (mocked tweepy), and callback dispatch; GitHub Actions lint/type-check. Offline smoke checks for the polling guard already exist in `scripts/` (§12.5).

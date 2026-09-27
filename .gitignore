@@ -1,17 +1,19 @@
+# --- Python bytecode ---
 __pycache__/
-data/jobs.db
+*.py[cod]
 
 # --- secrets: never commit real values (the template lives in .env.example) ---
 .env
 .env.*
 !.env.example
 
-# --- local runtime artifacts ---
-data/*.db
-data/*.db-shm
-data/*.db-wal
+# --- local runtime artifacts: SQLite DB + WAL, media, scheduler store,
+#     single-instance lock file, logs ---
+data/
+logs/
+*.log
+
+# --- virtualenvs / node tooling ---
 .venv/
 venv/
 node_modules/
-logs/
-*.log
