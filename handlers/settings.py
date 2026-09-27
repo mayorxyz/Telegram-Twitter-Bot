@@ -7,7 +7,7 @@ from __future__ import annotations
 import logging
 from zoneinfo import available_timezones
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
 from db import crud
@@ -88,7 +88,12 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         "• /report — weekly/monthly health digest from local stats\n"
         "• /help — this message"
     )
-    await update.message.reply_text(help_text, parse_mode="HTML")
+    kb = ReplyKeyboardMarkup([
+        [KeyboardButton("📝 New Tweet"), KeyboardButton("🧵 New Thread")],
+        [KeyboardButton("📋 Queue"),     KeyboardButton("⚙️ Settings")],
+        [KeyboardButton("📊 Report"),    KeyboardButton("📄 Templates")],
+    ], resize_keyboard=True, is_persistent=True)
+    await update.message.reply_text(help_text, reply_markup=kb, parse_mode="HTML")
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

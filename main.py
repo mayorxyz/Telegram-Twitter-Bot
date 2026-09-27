@@ -220,6 +220,16 @@ async def post_shutdown(application: Application) -> None:
     log.info("shutdown complete")
 
 
+_MENU_MAP = {
+    "📝 New Tweet":  "new_tweet",
+    "🧵 New Thread": "thread",
+    "📋 Queue":      "queue",
+    "⚙️ Settings":   "settings",
+    "📊 Report":     "report",
+    "📄 Templates":  "template",
+}
+
+
 async def ingest_text(update, context) -> None:
     """Plain text in: consume active input flows first, else create a draft."""
     from utils.ui import deny, is_admin
@@ -231,6 +241,28 @@ async def ingest_text(update, context) -> None:
     msg = update.message
     if msg is None:
         return
+
+    raw_text = (msg.text or "").strip()
+    menu_action = _MENU_MAP.get(raw_text)
+    if menu_action:
+        if menu_action == "new_tweet":
+            await msg.reply_text("✏️ Send your tweet text.")
+            return
+        elif menu_action == "thread":
+            await threads.thread_command(update, context)
+            return
+        elif menu_action == "queue":
+            await queue.queue_command(update, context)
+            return
+        elif menu_action == "settings":
+            await settings.settings_command(update, context)
+            return
+        elif menu_action == "report":
+            await report.report_command(update, context)
+            return
+        elif menu_action == "template":
+            await templates.template_command(update, context)
+            return
 
     if await editor.handle_flow_message(update, context):
         return
