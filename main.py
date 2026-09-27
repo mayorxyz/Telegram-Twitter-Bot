@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import sys
 import time
 from datetime import timezone
 
@@ -58,6 +59,25 @@ _TOKEN_REJECTED_HINT = (
 
 class StartupError(RuntimeError):
     """Startup preflight failed; the message is user-facing and actionable."""
+
+
+def _soften_stream_errors() -> None:
+    """Never crash on a non-ASCII log message when output is piped or redirected.
+
+    Windows falls back to the locale encoding (cp1252 on most machines) as soon as
+    stdout/stderr are redirected, and messages here contain "—" and "→". An
+    unencodable character would make ``logging`` print a "--- Logging error ---"
+    block instead of the real line, exactly the noise this module removes.
+    ``errors="replace"`` keeps the encoding and degrades odd glyphs to "?".
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(errors="replace")
+        except (ValueError, OSError):  # detached or closed stream
+            pass
 
 
 def _note_conflict(application: Application | None) -> None:
@@ -320,6 +340,7 @@ def build_application() -> Application:
 
 
 def main() -> None:
+    _soften_stream_errors()  # before any handler exists (see the docstring above)
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)-8s %(name)s: %(message)s",

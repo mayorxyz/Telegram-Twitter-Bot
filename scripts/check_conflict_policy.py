@@ -19,6 +19,12 @@ from types import SimpleNamespace
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
+# Redirected streams on Windows fall back to cp1252, where "->"/"—" in the
+# messages under test would raise UnicodeEncodeError; degrade them instead.
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(errors="replace")
+
 os.environ["CONFLICT_ABORT_AFTER"] = "3"  # abort after 3 consecutive 409s
 os.environ.pop("ALLOW_MULTI_INSTANCE", None)
 

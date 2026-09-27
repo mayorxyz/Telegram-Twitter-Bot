@@ -16,6 +16,12 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
+# Redirected streams on Windows fall back to cp1252; keep the checks printable
+# when their output is piped or written to a file.
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(errors="replace")
+
 logging.basicConfig(level=logging.INFO, format="%(levelname)-8s %(name)s: %(message)s")
 
 from web.server import PORT, start_dashboard, stop_dashboard  # noqa: E402
