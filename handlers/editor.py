@@ -154,13 +154,16 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
     flow = context.user_data.get("flow")
     if flow and flow[0] == "edit_content":
-        post = crud.update_post(flow[1], media_path=path)
+        post = crud.add_post_media(flow[1], [path])
         await update_preview(context, msg.chat.id, post, text_extra="📎 Media attached.")
         return
-    caption = msg.text or "📷 (photo post)"
+    # Caption-less media drafts store empty content: the card renders "📎 Media post"
+    # and publish sends the files with no text. (Telegram puts photo captions in
+    # msg.caption, never msg.text.)
+    caption = (msg.caption or msg.text or "").strip()
     from handlers.drafts import new_draft_message
 
-    await new_draft_message(update, context, caption, media_path=path)
+    await new_draft_message(update, context, caption, media_ids=[path])
 
 
 # ------------------------------------------------- inline editor callbacks --

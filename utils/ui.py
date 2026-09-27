@@ -114,14 +114,70 @@ def tag_keyboard(post_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([row1, row2])
 
 
-def media_keyboard(post_id: int, has_media: bool) -> InlineKeyboardMarkup:
-    row = [InlineKeyboardButton("🗑 Remove media" if has_media else "ℹ️ No media attached",
-                                callback_data=f"d:{post_id}:unmedia")]
-    if has_media:
-        row.append(InlineKeyboardButton("↩️ Back", callback_data=f"d:{post_id}:back"))
-        return InlineKeyboardMarkup([row])
-    row.append(InlineKeyboardButton("↩️ Back", callback_data=f"d:{post_id}:back"))
-    return InlineKeyboardMarkup([row])
+_PHOTO_EXTS = {".jpg", ".jpeg", ".png", ".webp"}
+_VIDEO_EXTS = {".mp4", ".mov", ".webm"}
+
+
+def media_ext(path: str) -> str:
+    return os.path.splitext(path or "")[1].lower()
+
+
+def media_keyboard(post_id: int, media: list[str] | None = None) -> InlineKeyboardMarkup:
+    """One 🗑 button per attached file (threads use thread_remove_media_keyboard)."""
+    paths = [p for p in (media or []) if p]
+    if not paths:
+        return InlineKeyboardMarkup([[
+            InlineKeyboardButton("ℹ️ No media attached", callback_data=f"d:{post_id}:media"),
+            InlineKeyboardButton("↩️ Back", callback_data=f"d:{post_id}:back"),
+        ]])
+    rows = [[InlineKeyboardButton(f"🗑 {os.path.basename(p)[:24]}",
+                                  callback_data=f"d:{post_id}:rmmedia:{i}")]
+            for i, p in enumerate(paths[:4])]
+    if len(paths) > 1:
+        rows.append([InlineKeyboardButton("🗑 Remove all",
+                                          callback_data=f"d:{post_id}:unmedia")])
+    rows.append([InlineKeyboardButton("↩️ Back", callback_data=f"d:{post_id}:back")])
+    return InlineKeyboardMarkup(rows)
+
+
+async def send_media(context: ContextTypes.DEFAULT_TYPE, chat_id: int, paths: list[str],
+                     caption: str | None = None,
+                     keyboard: InlineKeyboardMarkup | None = None):
+    """Show attached media in chat: an album for 2-4 images, else the single file.
+
+    Returns the sent message for a single file, the message list for an album, or
+    None when nothing could be sent. Telegram can't attach a reply_markup to a
+    media group, so for an album the caller must post its own control card.
+    """
+    paths = [p for p in paths if p and os.path.isfile(p)]
+    if not paths:
+        return None
+    if len(paths) > 1 and all(media_ext(p) in _PHOTO_EXTS for p in paths):
+        handles = [open(p, "rb") for p in paths[:4]]
+        try:
+            media = [InputMediaPhoto(media=h,
+                                     caption=caption if i == 0 else None,
+                                     parse_mode="HTML" if i == 0 else None)
+                     for i, h in enumerate(handles)]
+            return await context.bot.send_media_group(chat_id=chat_id, media=media)
+        finally:
+            for h in handles:
+                h.close()
+    path = paths[0]
+    ext = media_ext(path)
+    with open(path, "rb") as fh:
+        if ext in _PHOTO_EXTS:
+            return await context.bot.send_photo(chat_id=chat_id, photo=fh, caption=caption,
+                                                reply_markup=keyboard, parse_mode="HTML")
+        if ext in _VIDEO_EXTS:
+            return await context.bot.send_video(chat_id=chat_id, video=fh, caption=caption,
+                                                reply_markup=keyboard, parse_mode="HTML")
+        if ext == ".gif":
+            return await context.bot.send_animation(chat_id=chat_id, animation=fh,
+                                                    caption=caption,
+                                                    reply_markup=keyboard, parse_mode="HTML")
+        return await context.bot.send_document(chat_id=chat_id, document=fh, caption=caption,
+                                               reply_markup=keyboard, parse_mode="HTML")
 
 
 def thread_media_keyboard(post_id: int, n_tweets: int) -> InlineKeyboardMarkup:
@@ -167,15 +223,18 @@ async def update_preview(context: ContextTypes.DEFAULT_TYPE, chat_id: int, post,
         await show_preview(context, chat_id, post, text_extra, rss)
         return
     is_thread = getattr(post, "thread", None) is not None
+    media = [p for p in (getattr(post, "media", None) or []) if os.path.isfile(p)]
+    single_photo = (not is_thread and len(media) == 1
+                    and media_ext(media[0]) in _PHOTO_EXTS)
     try:
-        if post.media_path and not is_thread:
+        if single_photo:
             # re-point the media too; caption-only edits can't change attachments
-            await context.bot.edit_message_media(
-                chat_id=chat_id, message_id=post.tg_message_id,
-                media=InputMediaPhoto(media=open(post.media_path, "rb"),
-                                      caption=html, parse_mode="HTML"),
-                reply_markup=kb,
-            )
+            with open(media[0], "rb") as fh:
+                await context.bot.edit_message_media(
+                    chat_id=chat_id, message_id=post.tg_message_id,
+                    media=InputMediaPhoto(media=fh, caption=html, parse_mode="HTML"),
+                    reply_markup=kb,
+                )
         else:
             await context.bot.edit_message_text(
                 chat_id=chat_id, message_id=post.tg_message_id,
@@ -197,13 +256,25 @@ async def show_preview(context: ContextTypes.DEFAULT_TYPE, chat_id: int, post,
         await update_preview(context, chat_id, post, text_extra, rss)
         return post.tg_message_id
     is_thread = getattr(post, "thread", None) is not None
-    if post.media_path and not is_thread:
-        sent = await context.bot.send_photo(
-            chat_id=chat_id, photo=open(post.media_path, "rb"),
-            caption=html, reply_markup=kb, parse_mode="HTML")
-    else:
-        sent = await context.bot.send_message(
-            chat_id=chat_id, text=html, reply_markup=kb, parse_mode="HTML")
+    media = [] if is_thread else list(getattr(post, "media", None) or [])
+    sent = None
+    if media:
+        album = len(media) > 1
+        # a media group can't carry buttons or a long caption → pair it with a card
+        shown = await send_media(context, chat_id, media,
+                                 caption=(f"📎 <b>{len(media)} media files</b>"
+                                          if album else html),
+                                 keyboard=None if album else kb)
+        if shown is None:
+            pass                  # unreadable files → fall back to a plain text card
+        elif album:
+            sent = await context.bot.send_message(chat_id=chat_id, text=html,
+                                                  reply_markup=kb, parse_mode="HTML")
+        else:
+            sent = shown          # the photo/video message already IS the card
+    if sent is None:
+        sent = await context.bot.send_message(chat_id=chat_id, text=html,
+                                              reply_markup=kb, parse_mode="HTML")
     from db import crud
     crud.update_post(post.id, tg_message_id=sent.message_id)
     post.tg_message_id = sent.message_id

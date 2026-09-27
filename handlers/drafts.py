@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import os
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
@@ -71,9 +72,9 @@ async def inject_template_to_thread(context: ContextTypes.DEFAULT_TYPE, chat_id:
 
 
 async def new_draft_message(update: Update, context: ContextTypes.DEFAULT_TYPE,
-                            text: str, media_path: str | None = None) -> int:
+                            text: str, media_ids: list[str] | None = None) -> int:
     """Create a draft row and push the preview card. Returns message id."""
-    post = crud.create_post(content=text, media_path=media_path,
+    post = crud.create_post(content=text, media_ids=media_ids,
                             auto_format=crud.get_bool("auto_format", True))
     mid = await show_preview(context, update.effective_chat.id, post,
                              text_extra="📝 <b>New draft</b> — confirm, edit or cancel:")
@@ -211,11 +212,23 @@ async def draft_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                              rss=rss_flag)
     elif action == "media":
         await cq.edit_message_reply_markup(
-            reply_markup=media_keyboard(post_id, bool(post.media_path)))
-    elif action == "unmedia":
-        post = crud.update_post(post_id, media_path=None)
-        await update_preview(context, chat_id, post, text_extra="📎 Media removed.",
+            reply_markup=media_keyboard(post_id, list(post.media)))
+    elif action == "rmmedia":
+        idx = int(parts[3])
+        paths = list(post.media)
+        if not (0 <= idx < len(paths)):
+            await update_preview(context, chat_id, post,
+                                 text_extra="ℹ️ That file is already gone.", rss=rss_flag)
+            return
+        name = os.path.basename(paths[idx])
+        post = crud.remove_post_media(post_id, paths[idx])
+        await update_preview(context, chat_id, post,
+                             text_extra=f"🗑 Detached <code>{escape_html(name)}</code>.",
                              rss=rss_flag)
+    elif action == "unmedia":
+        post = crud.remove_post_media(post_id)
+        await update_preview(context, chat_id, post,
+                             text_extra="🗑 All media detached.", rss=rss_flag)
     elif action == "tmedia":  # thread drafts: pick which tweet gets the next photo
         from handlers.threads import open_attach_picker
 

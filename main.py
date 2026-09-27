@@ -263,10 +263,7 @@ async def ingest_photo(update, context) -> None:
 
 
 async def ingest_video(update, context) -> None:
-    """Video/document in: thread attach-slot flow consumes it; otherwise ignored.
-
-    (Single-tweet media stays photo-only by design — see editor.handle_media.)
-    """
+    """Video/gif/document in: opens the media flow (single tweet or thread)."""
     from utils.ui import deny, is_admin
 
     if not is_admin(update):
@@ -330,8 +327,8 @@ def build_application() -> Application:
     app.add_handler(CallbackQueryHandler(settings.settings_callback, pattern=r"^(set|tz):"))
     # 7) Templates management + injection into drafts: tpl:  (no conflict with t:)
     app.add_handler(CallbackQueryHandler(templates.template_callback, pattern=r"^tpl:"))
-    # 8) Thread builder buttons: th: and thm: per-tweet media picker.
-    app.add_handler(CallbackQueryHandler(threads.thread_callback, pattern=r"^th(m)?:"))
+    # 8) Thread builder buttons: th:, thm:, AND media: actions
+    app.add_handler(CallbackQueryHandler(threads.thread_callback, pattern=r"^(th(m)?|media):"))
 
     # ---- global error classification: 409 conflicts / network blips ---------
     app.add_error_handler(on_error)

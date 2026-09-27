@@ -1,350 +1,920 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" class="dark">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>X Poster Dashboard</title>
-<style>
-  :root {
-    --bg: #0d1117;
-    --panel: #161b22;
-    --panel-2: #1c2129;
-    --border: #30363d;
-    --text: #e6edf3;
-    --muted: #8b949e;
-    --draft: #8b949e;
-    --scheduled: #58a6ff;
-    --published: #3fb950;
-    --failed: #f85149;
-  }
-  * { box-sizing: border-box; }
-  html, body { height: 100%; }
-  body {
-    margin: 0;
-    background: var(--bg);
-    color: var(--text);
-    font: 14px/1.5 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-    -webkit-font-smoothing: antialiased;
-  }
-  header {
-    position: sticky; top: 0; z-index: 5;
-    display: flex; flex-wrap: wrap; align-items: baseline; gap: 12px;
-    padding: 14px 20px;
-    background: rgba(13, 17, 23, .93);
-    border-bottom: 1px solid var(--border);
-    backdrop-filter: blur(6px);
-  }
-  header h1 { margin: 0; font-size: 16px; font-weight: 600; letter-spacing: .2px; }
-  #meta { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
-  #banner {
-    margin: 12px 20px 0; padding: 10px 12px;
-    border: 1px solid var(--failed); border-radius: 8px;
-    background: rgba(248, 81, 73, .08);
-    color: var(--failed); font-size: 13px;
-  }
-  main { padding: 16px 20px 40px; }
-  section { margin: 0 0 26px; }
-  section h2 {
-    display: flex; align-items: center; gap: 8px;
-    margin: 0 0 10px;
-    font-size: 12px; font-weight: 600;
-    text-transform: uppercase; letter-spacing: .09em;
-    color: var(--muted);
-  }
-  section h2 .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
-  section h2 .count {
-    padding: 0 7px; border: 1px solid var(--border); border-radius: 999px;
-    font-size: 11px; color: var(--text); background: var(--panel);
-  }
-  .grid { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); }
-  .card {
-    padding: 12px;
-    background: var(--panel);
-    border: 1px solid var(--border);
-    border-left: 3px solid var(--border);
-    border-radius: 8px;
-  }
-  .card .top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
-  .card .id { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
-  .badge {
-    padding: 0 8px; border-radius: 999px;
-    border: 1px solid currentColor;
-    background: var(--panel-2);
-    font-size: 11px; font-weight: 600; text-transform: lowercase;
-  }
-  .chip {
-    padding: 0 7px; border-radius: 6px; font-size: 11px;
-    background: var(--panel-2); border: 1px solid var(--border); color: var(--muted);
-  }
-  .card .body { white-space: pre-wrap; word-break: break-word; }
-  .card .body.empty { color: var(--muted); font-style: italic; }
-  .card .foot {
-    display: flex; gap: 12px; flex-wrap: wrap;
-    margin-top: 9px; font-size: 12px; color: var(--muted);
-  }
-  .card .foot a { color: var(--scheduled); text-decoration: none; }
-  .card .foot a:hover { text-decoration: underline; }
-  .err {
-    margin-top: 9px; padding: 7px 9px;
-    border: 1px solid rgba(248, 81, 73, .5); border-radius: 6px;
-    background: rgba(248, 81, 73, .08); color: var(--failed);
-    font-size: 12px; white-space: pre-wrap; word-break: break-word;
-  }
-  .tweets { display: none; margin-top: 10px; padding-top: 9px; border-top: 1px dashed var(--border); }
-  .tweets.open { display: block; }
-  .tw { display: flex; gap: 9px; padding: 6px 0; font-size: 13px; }
-  .tw + .tw { border-top: 1px solid var(--panel-2); }
-  .tw .n {
-    flex: none; width: 20px; height: 20px; border-radius: 50%;
-    display: grid; place-items: center;
-    background: var(--panel-2); border: 1px solid var(--border);
-    font-size: 11px; color: var(--muted);
-  }
-  .tw .txt { white-space: pre-wrap; word-break: break-word; }
-  .muted { color: var(--muted); }
-  .empty-section { color: var(--muted); font-size: 12px; font-style: italic; }
-  [data-clickable] { cursor: pointer; }
-</style>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>X Poster Dashboard</title>
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- FontAwesome for Authentic Icons -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            xBlack: '#000000',
+            xPanel: '#16181c',
+            xBorder: '#2f3336',
+            xHover: '#181818',
+            xBlue: '#1d9bf0',
+            xBlueHover: '#1a8cd8',
+            xGreen: '#00ba7c',
+            xRed: '#f4212e',
+            xMuted: '#71767b',
+            xLightText: '#e7e9ea'
+          }
+        }
+      }
+    }
+  </script>
+  
+  <style>
+    /* Custom Scrollbar */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: #000000; }
+    ::-webkit-scrollbar-thumb { background: #2f3336; border-radius: 9999px; }
+    ::-webkit-scrollbar-thumb:hover { background: #71767b; }
+    
+    /* Dynamic Media Grid Styles */
+    .grid-1-img { grid-template-columns: 1fr; }
+    .grid-2-img { grid-template-columns: 1fr 1fr; }
+    .grid-3-img { grid-template-columns: 1.2fr 0.8fr; grid-template-rows: 1fr 1fr; }
+    .grid-3-img .media-0 { grid-row: 1 / span 2; }
+    .grid-4-img { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
+
+    .tweet-text-hashtag { color: #1d9bf0; }
+    .tweet-text-hashtag:hover { text-decoration: underline; cursor: pointer; }
+    
+    .glass-header {
+      background: rgba(0, 0, 0, 0.75);
+      backdrop-filter: blur(12px);
+    }
+  </style>
 </head>
-<body>
-<header>
-  <h1>🛰 X Poster Dashboard</h1>
-  <span id="meta">connecting…</span>
-</header>
-<div id="banner" hidden></div>
-<main id="sections"></main>
+<body class="bg-xBlack text-xLightText font-sans min-h-screen flex flex-col antialiased selection:bg-xBlue selection:text-white">
 
-<script>
-"use strict";
+  <div id="app" class="flex flex-col lg:flex-row min-h-screen max-w-7xl mx-auto w-full border-x border-xBorder">
 
-const API = "http://127.0.0.1:3000/api/posts";
-const POLL_MS = 3000;
-const PREVIEW_CHARS = 140;
-const SECTIONS = [
-  { key: "draft",     label: "Draft" },
-  { key: "scheduled", label: "Scheduled" },
-  { key: "published", label: "Published" },
-  { key: "failed",    label: "Failed" },
-];
+    <!-- LEFT SIDEBAR -->
+    <aside class="w-full lg:w-64 xl:w-72 border-b lg:border-b-0 lg:border-r border-xBorder p-3 flex lg:flex-col justify-between sticky top-0 bg-xBlack z-30 h-auto lg:h-screen">
+      <div class="flex lg:flex-col items-center lg:items-start w-full gap-2 lg:gap-4">
+        <!-- Logo -->
+        <div class="p-3 hover:bg-xPanel rounded-full cursor-pointer transition flex items-center justify-center">
+          <svg class="w-8 h-8 fill-current text-white" viewBox="0 0 24 24">
+            <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/>
+          </svg>
+        </div>
 
-const sectionsEl = document.getElementById("sections");
-const metaEl = document.getElementById("meta");
-const bannerEl = document.getElementById("banner");
+        <!-- Navigation Links / Tab Selectors -->
+        <nav id="nav-tabs" class="flex lg:flex-col flex-1 justify-around lg:justify-start w-full gap-1">
+          <button data-tab="all" class="nav-btn active flex items-center gap-4 p-3 rounded-full hover:bg-xPanel transition w-full text-left font-bold text-xBlue">
+            <i class="fa-solid fa-layer-group text-xl w-6 text-center"></i>
+            <span class="hidden xl:inline text-lg">All Posts</span>
+            <span id="badge-all" class="ml-auto text-xs px-2 py-0.5 rounded-full bg-xPanel text-xMuted border border-xBorder">0</span>
+          </button>
+          
+          <button data-tab="draft" class="nav-btn flex items-center gap-4 p-3 rounded-full hover:bg-xPanel transition w-full text-left text-xMuted hover:text-white">
+            <i class="fa-regular fa-pen-to-square text-xl w-6 text-center"></i>
+            <span class="hidden xl:inline text-lg">Drafts</span>
+            <span id="badge-draft" class="ml-auto text-xs px-2 py-0.5 rounded-full bg-xPanel text-xMuted border border-xBorder">0</span>
+          </button>
 
-const cards = new Map();     // post id -> { el, sig }
-const expanded = new Set();  // post ids whose thread tweets are open
-let latest = [];             // last good payload (used by the thread toggle)
-let failures = 0;
+          <button data-tab="scheduled" class="nav-btn flex items-center gap-4 p-3 rounded-full hover:bg-xPanel transition w-full text-left text-xMuted hover:text-white">
+            <i class="fa-regular fa-clock text-xl w-6 text-center"></i>
+            <span class="hidden xl:inline text-lg">Scheduled</span>
+            <span id="badge-scheduled" class="ml-auto text-xs px-2 py-0.5 rounded-full bg-xPanel text-xMuted border border-xBorder">0</span>
+          </button>
 
-/* ---------------------------------------------------------------- helpers -- */
+          <button data-tab="published" class="nav-btn flex items-center gap-4 p-3 rounded-full hover:bg-xPanel transition w-full text-left text-xMuted hover:text-white">
+            <i class="fa-solid fa-circle-check text-xl w-6 text-center text-xGreen"></i>
+            <span class="hidden xl:inline text-lg">Published</span>
+            <span id="badge-published" class="ml-auto text-xs px-2 py-0.5 rounded-full bg-xPanel text-xMuted border border-xBorder">0</span>
+          </button>
 
-function el(tag, cls, text) {
-  const node = document.createElement(tag);
-  if (cls) node.className = cls;
-  if (text !== undefined && text !== null) node.textContent = text;
-  return node;
-}
+          <button data-tab="failed" class="nav-btn flex items-center gap-4 p-3 rounded-full hover:bg-xPanel transition w-full text-left text-xMuted hover:text-white">
+            <i class="fa-solid fa-triangle-exclamation text-xl w-6 text-center text-xRed"></i>
+            <span class="hidden xl:inline text-lg">Failed</span>
+            <span id="badge-failed" class="ml-auto text-xs px-2 py-0.5 rounded-full bg-xPanel text-xMuted border border-xBorder">0</span>
+          </button>
+        </nav>
 
-function color(key) {
-  return "var(--" + key + ", var(--muted))";
-}
+        <!-- Compose Tweet Button -->
+        <button id="open-compose-btn" class="mt-2 bg-xBlue hover:bg-xBlueHover text-white font-bold p-3 xl:py-3 xl:px-8 rounded-full shadow-lg transition duration-200 w-full flex items-center justify-center gap-2">
+          <i class="fa-solid fa-feather-pointed text-lg"></i>
+          <span class="hidden xl:inline text-base">Post / Draft</span>
+        </button>
+      </div>
 
-function labelFor(key) {
-  const known = SECTIONS.find(s => s.key === key);
-  if (known) return known.label;
-  return key.charAt(0).toUpperCase() + key.slice(1);
-}
+      <!-- Account Info / Server Status Footer -->
+      <div class="hidden lg:flex flex-col gap-3 p-2 mt-auto border-t border-xBorder w-full pt-4">
+        <div class="flex items-center justify-between text-xs text-xMuted">
+          <span class="flex items-center gap-1.5">
+            <span id="status-indicator" class="w-2.5 h-2.5 rounded-full bg-xRed inline-block"></span>
+            <span id="status-text">Disconnected</span>
+          </span>
+          <button id="toggle-mock-btn" class="hover:underline text-xBlue">Use Mock Data</button>
+        </div>
+        
+        <div class="flex items-center gap-3 p-2 rounded-full hover:bg-xPanel cursor-pointer transition">
+          <img id="user-avatar-display" src="https://placehold.co/100x100/1d9bf0/ffffff?text=X" class="w-10 h-10 rounded-full object-cover border border-xBorder" alt="Profile">
+          <div class="hidden xl:block min-w-0 flex-1">
+            <p class="font-bold text-sm text-xLightText truncate">X Bot Manager</p>
+            <p class="text-xs text-xMuted truncate">@poster_bot</p>
+          </div>
+          <i class="fa-solid fa-ellipsis text-xMuted hidden xl:inline ml-auto"></i>
+        </div>
+      </div>
+    </aside>
 
-function fmtLocal(date) {
-  if (Number.isNaN(date.getTime())) return "invalid date";
-  return date.toLocaleString(undefined, {
-    year: "numeric", month: "short", day: "2-digit",
-    hour: "2-digit", minute: "2-digit",
-  });
-}
+    <!-- MAIN CONTENT AREA -->
+    <main class="flex-1 min-w-0 flex flex-col min-h-screen">
+      
+      <!-- Sticky Header -->
+      <header class="glass-header sticky top-0 z-20 border-b border-xBorder px-4 py-3 flex items-center justify-between">
+        <div class="flex items-center gap-3">
+          <h1 id="page-title" class="text-xl font-bold tracking-tight">All Posts</h1>
+          <span id="post-count-badge" class="bg-xPanel text-xMuted text-xs font-semibold px-2.5 py-1 rounded-full border border-xBorder">0 posts</span>
+        </div>
+        
+        <div class="flex items-center gap-2">
+          <button id="refresh-btn" class="p-2 text-xMuted hover:text-xBlue hover:bg-xPanel rounded-full transition" title="Sync / Refresh Data">
+            <i class="fa-solid fa-arrows-rotate text-sm"></i>
+          </button>
+          <div id="connection-banner" class="hidden text-xs bg-xRed/10 text-xRed border border-xRed/30 px-3 py-1 rounded-full flex items-center gap-1.5">
+            <i class="fa-solid fa-circle-exclamation"></i>
+            <span>API Offline (Using Mock)</span>
+          </div>
+        </div>
+      </header>
 
-function tweetUrl(id) {
-  return "https://x.com/i/web/status/" + encodeURIComponent(id);
-}
+      <!-- Section Tabs Navigation -->
+      <div class="flex border-b border-xBorder bg-xBlack text-sm font-semibold text-xMuted overflow-x-auto no-scrollbar">
+        <button data-filter="all" class="filter-tab active flex-1 py-3 px-4 text-center border-b-2 border-xBlue text-xLightText hover:bg-xPanel/50 transition">All</button>
+        <button data-filter="draft" class="filter-tab flex-1 py-3 px-4 text-center border-b-2 border-transparent hover:bg-xPanel/50 transition">Drafts</button>
+        <button data-filter="scheduled" class="filter-tab flex-1 py-3 px-4 text-center border-b-2 border-transparent hover:bg-xPanel/50 transition">Scheduled</button>
+        <button data-filter="published" class="filter-tab flex-1 py-3 px-4 text-center border-b-2 border-transparent hover:bg-xPanel/50 transition">Published</button>
+        <button data-filter="failed" class="filter-tab flex-1 py-3 px-4 text-center border-b-2 border-transparent hover:bg-xPanel/50 transition">Failed</button>
+      </div>
 
-function toggleThread(id) {
-  if (expanded.has(id)) expanded.delete(id);
-  else expanded.add(id);
-  render(latest);
-}
+      <!-- POSTS CONTAINER / CARDS LIST -->
+      <div id="posts-container" class="divide-y divide-xBorder flex-1">
+        <!-- Dynamic Cards rendered here -->
+      </div>
 
-function signature(post) {
-  return JSON.stringify([
-    post.status, post.content, post.tag, post.scheduled_at,
-    post.tweet_id, post.error, post.is_thread, post.tweets,
-    expanded.has(post.id),
-  ]);
-}
-/* ------------------------------------------------------------ card build -- */
+      <!-- Empty State View -->
+      <div id="empty-state" class="hidden flex-1 flex flex-col items-center justify-center p-8 text-center text-xMuted">
+        <i class="fa-solid fa-paper-plane text-4xl mb-3 text-xBorder"></i>
+        <h3 class="text-lg font-bold text-xLightText mb-1">No posts found</h3>
+        <p class="text-sm max-w-sm mb-4">There are no tweets or drafts in this view yet. Start by composing a new post!</p>
+        <button id="empty-compose-btn" class="bg-xBlue text-white font-bold px-5 py-2 rounded-full hover:bg-xBlueHover transition text-sm">
+          Create Post
+        </button>
+      </div>
+    </main>
 
-function buildCard(post) {
-  const card = el("div", "card");
-  card.dataset.id = String(post.id);
-  card.style.borderLeftColor = color(post.status);
+    <!-- RIGHT SIDEBAR (Stats & Controls) -->
+    <aside class="hidden xl:block w-80 p-4 border-l border-xBorder flex flex-col gap-4">
+      <!-- Quick Stats Widget -->
+      <div class="bg-xPanel rounded-2xl p-4 border border-xBorder">
+        <h3 class="font-bold text-lg mb-3">Dashboard Overview</h3>
+        <div class="grid grid-cols-2 gap-3">
+          <div class="bg-xBlack p-3 rounded-xl border border-xBorder">
+            <p class="text-xs text-xMuted font-medium">Published</p>
+            <p id="stat-published" class="text-xl font-extrabold text-xGreen">0</p>
+          </div>
+          <div class="bg-xBlack p-3 rounded-xl border border-xBorder">
+            <p class="text-xs text-xMuted font-medium">Scheduled</p>
+            <p id="stat-scheduled" class="text-xl font-extrabold text-xBlue">0</p>
+          </div>
+          <div class="bg-xBlack p-3 rounded-xl border border-xBorder">
+            <p class="text-xs text-xMuted font-medium">Drafts</p>
+            <p id="stat-draft" class="text-xl font-extrabold text-xMuted">0</p>
+          </div>
+          <div class="bg-xBlack p-3 rounded-xl border border-xBorder">
+            <p class="text-xs text-xMuted font-medium">Failed</p>
+            <p id="stat-failed" class="text-xl font-extrabold text-xRed">0</p>
+          </div>
+        </div>
+      </div>
 
-  const top = el("div", "top");
-  top.appendChild(el("span", "id", "#" + post.id));
-  const badge = el("span", "badge", post.status || "unknown");
-  badge.style.color = color(post.status);
-  top.appendChild(badge);
-  if (post.tag) top.appendChild(el("span", "chip", "#" + post.tag));
-  if (post.is_thread) {
-    const chip = el("span", "chip", "🧵 " + post.tweets.length + " tweets");
-    chip.title = "click to expand";
-    top.appendChild(chip);
-  }
-  card.appendChild(top);
+      <!-- API & Bot Connection Widget -->
+      <div class="bg-xPanel rounded-2xl p-4 border border-xBorder flex flex-col gap-3">
+        <h3 class="font-bold text-base flex items-center gap-2">
+          <i class="fa-solid fa-server text-xBlue"></i> API Endpoint
+        </h3>
+        <p class="text-xs text-xMuted">Syncing live posts with local poster service backend.</p>
+        <input type="text" id="api-endpoint-input" value="http://127.0.0.1:3000/api/posts" class="bg-xBlack border border-xBorder rounded-lg px-3 py-2 text-xs text-xLightText focus:outline-none focus:border-xBlue">
+        <div class="flex gap-2">
+          <button id="save-api-btn" class="flex-1 bg-xPanel hover:bg-xHover border border-xBorder text-xs py-1.5 rounded-lg font-semibold transition">Save Endpoint</button>
+          <button id="test-api-btn" class="bg-xBlue hover:bg-xBlueHover text-white text-xs px-3 py-1.5 rounded-lg font-semibold transition">Test Sync</button>
+        </div>
+      </div>
 
-  const raw = post.content || "";
-  const short = raw.length > PREVIEW_CHARS ? raw.slice(0, PREVIEW_CHARS) + "…" : raw;
-  const body = el("div", "body" + (raw ? "" : " empty"), raw ? short : "(no text)");
-  if (raw.length > PREVIEW_CHARS) body.title = raw;
-  card.appendChild(body);
+      <!-- Quick Action Hints -->
+      <div class="bg-xPanel/50 rounded-2xl p-4 border border-xBorder text-xs text-xMuted leading-relaxed">
+        <p class="font-bold text-xLightText mb-1">💡 Poster Tips</p>
+        <ul class="list-disc list-inside space-y-1">
+          <li>Supports single tweets or full threaded posts.</li>
+          <li>Paste direct image URLs or standard comma-separated paths.</li>
+          <li>Offline local simulation lets you test posts directly in browser.</li>
+        </ul>
+      </div>
+    </aside>
 
-  const foot = el("div", "foot");
-  if (post.scheduled_at) {
-    foot.appendChild(el("span", null, "🗓 " + fmtLocal(new Date(post.scheduled_at))));
-  }
-  if (post.status === "published" && post.tweet_id) {
-    const link = el("a", null, "↗ tweet " + post.tweet_id);
-    link.href = tweetUrl(post.tweet_id);
-    link.target = "_blank";
-    link.rel = "noopener noreferrer";
-    foot.appendChild(link);
-  }
-  if (foot.childNodes.length) card.appendChild(foot);
+  </div>
 
-  if (post.status === "failed" && post.error) {
-    card.appendChild(el("div", "err", "⚠ " + post.error));
-  }
+  <!-- MODAL: Compose Tweet / Post -->
+  <div id="compose-modal" class="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+    <div class="bg-xBlack border border-xBorder rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl flex flex-col max-h-[90vh]">
+      <div class="px-4 py-3 border-b border-xBorder flex items-center justify-between">
+        <button id="close-compose-btn" class="text-xMuted hover:text-white p-2 rounded-full hover:bg-xPanel transition">
+          <i class="fa-solid fa-xmark text-lg"></i>
+        </button>
+        <h2 class="font-bold text-base">New Tweet / Draft</h2>
+        <span class="w-8"></span>
+      </div>
 
-  if (post.is_thread) {
-    const box = el("div", "tweets" + (expanded.has(post.id) ? " open" : ""));
-    post.tweets.forEach(tweet => {
-      const row = el("div", "tw");
-      row.appendChild(el("span", "n", String((tweet.position || 0) + 1)));
-      const txt = el("div", "txt", tweet.content || "(media only)");
-      const media = (tweet.media_ids || []).length;
-      if (media) txt.appendChild(el("span", "muted", (tweet.content ? "\n" : "") +
-                                                      "📎 " + media + " media"));
-      row.appendChild(txt);
-      box.appendChild(row);
-    });
-    card.appendChild(box);
-    top.dataset.clickable = "1";
-    body.dataset.clickable = "1";
-    top.addEventListener("click", () => toggleThread(post.id));
-    body.addEventListener("click", () => toggleThread(post.id));
-  }
-  return card;
-}
+      <div class="p-4 overflow-y-auto space-y-4">
+        <div class="flex items-center gap-3">
+          <img src="https://placehold.co/100x100/1d9bf0/ffffff?text=X" class="w-10 h-10 rounded-full border border-xBorder" alt="Avatar">
+          <div>
+            <p class="font-bold text-sm">X Poster Bot</p>
+            <p class="text-xs text-xMuted">@poster_bot</p>
+          </div>
+        </div>
 
-function ensureSection(key) {
-  let section = document.getElementById("sec-" + key);
-  if (!section) {
-    section = el("section");
-    section.id = "sec-" + key;
-    const head = el("h2");
-    const dot = el("span", "dot");
-    dot.style.background = color(key);
-    head.appendChild(dot);
-    head.appendChild(el("span", "lbl", labelFor(key)));
-    head.appendChild(el("span", "count", "0"));
-    section.appendChild(head);
-    section.appendChild(el("div", "grid"));
-    sectionsEl.appendChild(section);
-  }
-  return section;
-}
+        <div class="flex gap-2">
+          <label class="text-xs text-xMuted font-bold self-center mr-1">Status:</label>
+          <select id="compose-status" class="bg-xPanel text-xLightText border border-xBorder text-xs rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-xBlue">
+            <option value="draft">Draft</option>
+            <option value="scheduled">Scheduled</option>
+            <option value="published">Published</option>
+            <option value="failed">Failed (Test)</option>
+          </select>
+          <input type="datetime-local" id="compose-schedule-time" class="bg-xPanel text-xLightText border border-xBorder text-xs rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-xBlue flex-1">
+        </div>
 
-/* ----------------------------------------------------------- DOM updates -- */
+        <div>
+          <textarea id="compose-text" rows="4" placeholder="What is happening?!" class="w-full bg-transparent text-xLightText text-base placeholder-xMuted border-none focus:outline-none resize-none"></textarea>
+        </div>
 
-function render(posts) {
-  latest = posts;
-  const groups = new Map();
-  posts.forEach(post => {
-    const key = post.status || "unknown";
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(post);
-  });
+        <div class="flex items-center gap-2 bg-xPanel px-3 py-1.5 rounded-lg border border-xBorder">
+          <span class="text-xBlue font-bold text-sm">#</span>
+          <input type="text" id="compose-tag" placeholder="Tag / Category (e.g. crypto, news)" class="bg-transparent text-xs text-xLightText focus:outline-none w-full">
+        </div>
 
-  const order = SECTIONS.map(section => section.key);
-  groups.forEach((_ignored, key) => { if (!order.includes(key)) order.push(key); });
+        <div class="space-y-1">
+          <label class="text-xs text-xMuted font-medium block">Media Image URLs (comma separated, up to 4 images):</label>
+          <input type="text" id="compose-media" placeholder="https://images.unsplash.com/photo-..., https://..." class="w-full bg-xPanel border border-xBorder rounded-lg px-3 py-2 text-xs text-xLightText focus:outline-none focus:border-xBlue">
+        </div>
 
-  order.forEach(key => {
-    const list = groups.get(key) || [];
-    const section = ensureSection(key);
-    const head = section.querySelector("h2");
-    head.querySelector(".dot").style.background = color(key);
-    head.querySelector(".lbl").textContent = labelFor(key);
-    head.querySelector(".count").textContent = String(list.length);
+        <div id="error-field-container" class="space-y-1 hidden">
+          <label class="text-xs text-xRed font-medium block">Simulated Error Message:</label>
+          <input type="text" id="compose-error" placeholder="e.g. 403 Forbidden: Invalid Twitter API Keys" class="w-full bg-xPanel border border-xRed/50 rounded-lg px-3 py-2 text-xs text-xRed focus:outline-none">
+        </div>
+      </div>
 
-    const grid = section.querySelector(".grid");
-    const keep = list.map(post => {
-      const entry = cards.get(post.id);
-      const sig = signature(post);
-      if (entry && entry.sig === sig) return entry.el;  // unchanged -> reuse node
-      if (entry) entry.el.remove();
-      const node = buildCard(post);
-      cards.set(post.id, { el: node, sig });
-      return node;
-    });
+      <div class="px-4 py-3 border-t border-xBorder flex items-center justify-between bg-xPanel/30">
+        <div class="flex items-center gap-3 text-xBlue text-lg">
+          <button title="Add Demo Image" id="btn-add-demo-img" class="p-2 hover:bg-xBlue/10 rounded-full transition">
+            <i class="fa-regular fa-image"></i>
+          </button>
+          <button title="Toggle Error Field" id="btn-toggle-err-field" class="p-2 hover:bg-xBlue/10 rounded-full transition">
+            <i class="fa-solid fa-triangle-exclamation"></i>
+          </button>
+        </div>
+        <button id="submit-post-btn" class="bg-xBlue hover:bg-xBlueHover text-white font-bold px-6 py-2 rounded-full text-sm transition">
+          Save Post
+        </button>
+      </div>
+    </div>
+  </div>
 
-    if (list.length) {
-      const placeholder = grid.querySelector(".empty-section");
-      if (placeholder) placeholder.remove();
+  <!-- LIGHTBOX IMAGE MODAL -->
+  <div id="lightbox-modal" class="fixed inset-0 bg-black/90 z-50 flex items-center justify-center p-4 hidden cursor-pointer">
+    <button id="close-lightbox" class="absolute top-4 right-4 text-white text-2xl p-3 hover:bg-white/10 rounded-full">
+      <i class="fa-solid fa-xmark"></i>
+    </button>
+    <img id="lightbox-img" src="" class="max-w-full max-h-[90vh] rounded-lg object-contain shadow-2xl" alt="Enlarged Preview">
+  </div>
+
+  <script>
+    "use strict";
+
+    // Same-origin by default (opening the file directly falls back to the bot's
+    // local port); the settings box can persist an override in localStorage.
+    const DEFAULT_API_URL = (location.protocol === "http:" || location.protocol === "https:")
+      ? `${location.origin}/api/posts`
+      : "http://127.0.0.1:3000/api/posts";
+    let API_URL = localStorage.getItem("dashboardApiUrl") || DEFAULT_API_URL;
+    const POLL_INTERVAL = 3000;   // dashboard refresh cadence (ms)
+    const FETCH_TIMEOUT = 4000;   // a stalled request must never block the loop
+
+    let useMock = false;
+    let currentFilter = "all";
+    let postsData = [];
+    let postsFingerprint = "";    // skip repaints when the payload is unchanged
+    let fetchInFlight = false;
+    let pollTimer = null;
+
+    const MOCK_POSTS = [
+      {
+        id: "mock-1",
+        status: "published",
+        content: "🚀 Excited to announce our new automated X posting dashboard! Clean, fast, and authentic Twitter UI feel. #buildinpublic #webdev #tech",
+        tag: "announcements",
+        scheduled_at: new Date(Date.now() - 3600000 * 2).toISOString(),
+        tweet_id: "1789012345678901234",
+        media_ids: [
+          "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=1000&q=80",
+          "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=600&q=80"
+        ],
+        metrics: { replies: 12, retweets: 34, likes: 245, views: "4.2K" }
+      },
+      {
+        id: "mock-2",
+        status: "scheduled",
+        content: "Thread breakdown coming up at 5 PM! 🧵 We are going to explore how modern web architectures handle real-time social scheduling.",
+        tag: "education",
+        scheduled_at: new Date(Date.now() + 3600000 * 4).toISOString(),
+        is_thread: true,
+        tweets: [
+          { content: "1/4 Understanding real-time API polling vs WebSocket connections for social bots." },
+          { content: "2/4 Fallback mechanisms: Always provide synthetic client mock data when backends go offline!" }
+        ],
+        media_ids: ["https://images.unsplash.com/photo-1526374965328-7f61d4dc18c5?auto=format&fit=crop&w=1000&q=80"]
+      },
+      {
+        id: "mock-3",
+        status: "draft",
+        content: "Drafting our next update notes... Need to review media aspect ratio grids and fallback handling for broken images. #notes",
+        tag: "drafts",
+        scheduled_at: null,
+        media_ids: [
+          "https://images.unsplash.com/photo-1550745165-9bc0b252726f?auto=format&fit=crop&w=600&q=80",
+          "https://images.unsplash.com/photo-1518770660439-4636190af475?auto=format&fit=crop&w=600&q=80",
+          "https://images.unsplash.com/photo-1531297484001-80022131f5a1?auto=format&fit=crop&w=600&q=80"
+        ]
+      },
+      {
+        id: "mock-4",
+        status: "failed",
+        content: "Testing automatic retry queue with invalid OAuth credentials. This should trigger an error warning border.",
+        tag: "alerts",
+        scheduled_at: new Date(Date.now() - 3600000 * 24).toISOString(),
+        error: "HTTP 401 Unauthorized: Invalid or expired Twitter OAuth User Tokens. Please re-authenticate your account.",
+        media_ids: []
+      }
+    ];
+
+    const postsContainer = document.getElementById("posts-container");
+    const emptyState = document.getElementById("empty-state");
+    const connectionBanner = document.getElementById("connection-banner");
+    const statusIndicator = document.getElementById("status-indicator");
+    const statusText = document.getElementById("status-text");
+    const toggleMockBtn = document.getElementById("toggle-mock-btn");
+    const refreshBtn = document.getElementById("refresh-btn");
+    const pageTitle = document.getElementById("page-title");
+    const postCountBadge = document.getElementById("post-count-badge");
+
+    const composeModal = document.getElementById("compose-modal");
+    const openComposeBtn = document.getElementById("open-compose-btn");
+    const emptyComposeBtn = document.getElementById("empty-compose-btn");
+    const closeComposeBtn = document.getElementById("close-compose-btn");
+    const submitPostBtn = document.getElementById("submit-post-btn");
+    const composeStatus = document.getElementById("compose-status");
+    const composeScheduleTime = document.getElementById("compose-schedule-time");
+    const composeText = document.getElementById("compose-text");
+    const composeTag = document.getElementById("compose-tag");
+    const composeMedia = document.getElementById("compose-media");
+    const composeError = document.getElementById("compose-error");
+    const errorFieldContainer = document.getElementById("error-field-container");
+
+    const lightboxModal = document.getElementById("lightbox-modal");
+    const lightboxImg = document.getElementById("lightbox-img");
+    const closeLightbox = document.getElementById("close-lightbox");
+
+    function sanitizeUrl(path) {
+      if (!path) return null;
+      if (/^(https?:|data:)/i.test(path)) return path;
+      // The API sends bare file names; legacy rows may hold "data/media/x.jpg"
+      // or an absolute Windows path — in every case /media/<name> is correct.
+      const name = String(path).replace(/\\/g, "/").split("/").filter(Boolean).pop();
+      return name ? `/media/${encodeURIComponent(name)}` : null;
     }
 
-    // drop nodes whose post changed status or was deleted
-    Array.from(grid.children).forEach(child => {
-      if (child.classList.contains("empty-section")) return;
-      if (keep.includes(child)) return;
-      const id = Number(child.dataset.id);
-      const entry = cards.get(id);
-      if (entry && entry.el === child) cards.delete(id);
-      child.remove();
+    function formatTime(dateStr) {
+      if (!dateStr) return "Draft";
+      const date = new Date(dateStr);
+      if (isNaN(date.getTime())) return "";
+      
+      const now = new Date();
+      const diffSecs = Math.floor((now - date) / 1000);
+      
+      if (diffSecs > 0 && diffSecs < 60) return `${diffSecs}s`;
+      if (diffSecs >= 60 && diffSecs < 3600) return `${Math.floor(diffSecs/60)}m`;
+      if (diffSecs >= 3600 && diffSecs < 86400) return `${Math.floor(diffSecs/3600)}h`;
+
+      return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+    }
+
+    function formatHashtags(text, hasMedia = false) {
+      if (!text) {
+        return hasMedia
+          ? '<span class="text-xMuted italic">📎 Media post</span>'
+          : '<span class="text-xMuted italic">(No text content)</span>';
+      }
+      return text.replace(/#(\w+)/g, '<span class="tweet-text-hashtag">#$1</span>');
+    }
+
+    // MEDIA GRID GENERATOR with robust fallback handling
+    function createMediaGrid(mediaList) {
+      if (!mediaList || mediaList.length === 0) return null;
+      
+      const count = Math.min(mediaList.length, 4);
+      const grid = document.createElement("div");
+      grid.className = `grid gap-0.5 rounded-2xl overflow-hidden border border-xBorder mt-3 media-grid grid-${count}-img max-h-[380px] bg-xPanel`;
+
+      mediaList.slice(0, 4).forEach((mediaPath, idx) => {
+        const item = document.createElement("div");
+        // Added min-h-[150px] to ensure fallback UI has enough space to render nicely
+        item.className = `relative overflow-hidden bg-xPanel cursor-pointer media-${idx} flex items-center justify-center min-h-[150px]`;
+
+        const url = sanitizeUrl(mediaPath);
+        const isVideo = /\.(mp4|mov|webm)$/i.test(mediaPath);
+
+        // Helper to render a clean fallback UI if media fails to load
+        const renderFallback = (type) => {
+          const icon = type === 'video' ? 'fa-video' : 'fa-image';
+          const label = type === 'video' ? 'Video added' : 'Image added';
+          item.innerHTML = `
+            <div class="absolute inset-0 flex flex-col items-center justify-center bg-xPanel text-xMuted">
+              <i class="fa-solid ${icon} text-3xl mb-2 text-xBlue/70"></i>
+              <span class="text-xs font-semibold tracking-wide">${label}</span>
+            </div>
+          `;
+        };
+
+        if (!url) {
+          renderFallback(isVideo ? 'video' : 'image');
+        } else if (isVideo) {
+          const video = document.createElement("video");
+          video.src = url;
+          video.className = "w-full h-full object-cover";
+          video.muted = true;
+          video.loop = true;
+          
+          video.onerror = () => {
+            video.style.display = 'none';
+            const badge = item.querySelector('.play-badge');
+            if (badge) badge.remove();
+            renderFallback('video');
+          };
+
+          item.appendChild(video);
+
+          const playBadge = document.createElement("div");
+          playBadge.className = "play-badge absolute inset-0 flex items-center justify-center bg-black/20 hover:bg-black/10 transition pointer-events-none";
+          playBadge.innerHTML = '<div class="w-12 h-12 bg-xBlue/90 rounded-full flex items-center justify-center text-white text-lg shadow-lg backdrop-blur-sm"><i class="fa-solid fa-play ml-1"></i></div>';
+          item.appendChild(playBadge);
+          
+        } else {
+          const img = document.createElement("img");
+          img.src = url;
+          img.alt = "Media content";
+          img.className = "w-full h-full object-cover hover:scale-105 transition duration-300";
+          img.loading = "lazy";
+          
+          img.onerror = () => {
+            img.style.display = 'none';
+            renderFallback('image');
+          };
+          
+          item.appendChild(img);
+        }
+
+        item.addEventListener("click", (e) => {
+          // Prevent lightbox from opening if it's a fallback state
+          if (item.querySelector('img')?.style.display === 'none' || item.querySelector('video')?.style.display === 'none') return;
+          e.stopPropagation();
+          lightboxImg.src = url;
+          lightboxModal.classList.remove("hidden");
+        });
+
+        grid.appendChild(item);
+      });
+
+      return grid;
+    }
+
+    function buildTweetCard(post) {
+      const card = document.createElement("article");
+      card.className = "p-4 hover:bg-xHover/50 transition cursor-pointer flex gap-3 group relative";
+      card.dataset.id = post.id;
+
+      const statusColors = {
+        draft: "border-xMuted text-xMuted",
+        scheduled: "border-xBlue text-xBlue",
+        published: "border-xGreen text-xGreen",
+        failed: "border-xRed text-xRed"
+      };
+
+      const avatarCol = document.createElement("div");
+      avatarCol.className = "flex flex-col items-center flex-shrink-0";
+      avatarCol.innerHTML = `
+        <img src="https://placehold.co/100x100/1d9bf0/ffffff?text=X" class="w-10 h-10 rounded-full border border-xBorder object-cover" alt="Avatar">
+      `;
+
+      const contentCol = document.createElement("div");
+      contentCol.className = "flex-1 min-w-0";
+
+      const header = document.createElement("div");
+      header.className = "flex items-center justify-between text-sm";
+      
+      const metaInfo = document.createElement("div");
+      metaInfo.className = "flex items-center gap-1.5 flex-wrap";
+      metaInfo.innerHTML = `
+        <span class="font-bold text-xLightText hover:underline">X Poster Bot</span>
+        <span class="text-xMuted text-xs">@poster_bot</span>
+        <span class="text-xMuted text-xs">·</span>
+        <span class="text-xMuted text-xs">${formatTime(post.scheduled_at)}</span>
+      `;
+
+      const statusBadge = document.createElement("span");
+      const statusClass = statusColors[post.status] || "border-xMuted text-xMuted";
+      statusBadge.className = `text-[10px] uppercase font-bold px-2 py-0.5 rounded-full border ${statusClass} tracking-wide`;
+      statusBadge.textContent = post.status || "Unknown";
+
+      header.appendChild(metaInfo);
+      header.appendChild(statusBadge);
+      contentCol.appendChild(header);
+
+      // media first: the body placeholder depends on whether anything is attached
+      const allMedia = Array.from(new Set([
+        ...(post.media_path ? [post.media_path] : []),
+        ...(post.media_ids || []),
+      ]));
+
+      const body = document.createElement("div");
+      body.className = "mt-1.5 text-[15px] leading-normal text-xLightText break-words whitespace-pre-wrap";
+      body.innerHTML = formatHashtags(post.display_content || post.content, allMedia.length > 0);
+      contentCol.appendChild(body);
+
+      if (post.tag) {
+        const tagLine = document.createElement("div");
+        tagLine.className = "mt-2";
+        tagLine.innerHTML = `<span class="bg-xBlue/10 text-xBlue text-xs font-semibold px-2 py-0.5 rounded-md">#${post.tag}</span>`;
+        contentCol.appendChild(tagLine);
+      }
+
+      if (allMedia.length > 0) {
+        const mediaGrid = createMediaGrid(allMedia);
+        if (mediaGrid) contentCol.appendChild(mediaGrid);
+      }
+
+      if (post.is_thread && post.tweets && post.tweets.length > 0) {
+        const threadBox = document.createElement("div");
+        threadBox.className = "mt-3 space-y-2 border-l-2 border-xBorder pl-3 ml-2";
+        
+        post.tweets.forEach((tw, idx) => {
+          const twItem = document.createElement("div");
+          twItem.className = "text-xs text-xMuted";
+          twItem.innerHTML = `
+            <div class="font-semibold text-xBlue mb-0.5">Thread Tweet ${idx + 1}</div>
+            <div class="text-xLightText text-sm">${formatHashtags(tw.display_content || tw.content, (tw.media_ids || []).length > 0)}</div>
+          `;
+          if (tw.media_ids && tw.media_ids.length > 0) {
+            const twGrid = createMediaGrid(tw.media_ids);
+            if (twGrid) twItem.appendChild(twGrid);
+          }
+          threadBox.appendChild(twItem);
+        });
+        contentCol.appendChild(threadBox);
+      }
+
+      if (post.status === "failed" && post.error) {
+        const errBox = document.createElement("div");
+        errBox.className = "mt-3 p-3 bg-xRed/10 border border-xRed/30 rounded-xl text-xRed text-xs space-y-1";
+        errBox.innerHTML = `
+          <div class="font-bold flex items-center gap-1.5">
+            <i class="fa-solid fa-triangle-exclamation"></i>
+            <span>Publication Error</span>
+          </div>
+          <div class="font-mono text-[11px] opacity-90 break-words">${post.error}</div>
+          <button class="retry-btn mt-2 bg-xRed text-white text-[11px] font-bold px-3 py-1 rounded-full hover:bg-red-600 transition">
+            <i class="fa-solid fa-rotate-right mr-1"></i> Retry Post
+          </button>
+        `;
+        contentCol.appendChild(errBox);
+
+        errBox.querySelector(".retry-btn")?.addEventListener("click", (e) => {
+          e.stopPropagation();
+          post.status = "scheduled";
+          post.error = null;
+          post.scheduled_at = new Date().toISOString();
+          renderPosts();
+        });
+      }
+
+      if (post.status === "published" && post.tweet_id) {
+        const extLink = document.createElement("div");
+        extLink.className = "mt-2";
+        extLink.innerHTML = `
+          <a href="https://x.com/i/web/status/${post.tweet_id}" target="_blank" rel="noopener noreferrer" class="inline-flex items-center gap-1 text-xs text-xBlue hover:underline font-medium">
+            <span>View live status on X</span>
+            <i class="fa-solid fa-arrow-up-right-from-square text-[10px]"></i>
+          </a>
+        `;
+        contentCol.appendChild(extLink);
+      }
+
+      const actions = document.createElement("div");
+      actions.className = "flex items-center justify-between text-xMuted text-xs mt-3 max-w-md pt-1";
+      
+      const metrics = post.metrics || { replies: 0, retweets: 0, likes: 0, views: "0" };
+
+      actions.innerHTML = `
+        <button class="hover:text-xBlue transition flex items-center gap-1.5 group/act">
+          <span class="p-1.5 rounded-full group-hover/act:bg-xBlue/10"><i class="fa-regular fa-comment"></i></span>
+          <span>${metrics.replies || 0}</span>
+        </button>
+        <button class="hover:text-xGreen transition flex items-center gap-1.5 group/act">
+          <span class="p-1.5 rounded-full group-hover/act:bg-xGreen/10"><i class="fa-solid fa-retweet"></i></span>
+          <span>${metrics.retweets || 0}</span>
+        </button>
+        <button class="hover:text-xRed transition flex items-center gap-1.5 group/act">
+          <span class="p-1.5 rounded-full group-hover/act:bg-xRed/10"><i class="fa-regular fa-heart"></i></span>
+          <span>${metrics.likes || 0}</span>
+        </button>
+        <button class="hover:text-xBlue transition flex items-center gap-1.5 group/act">
+          <span class="p-1.5 rounded-full group-hover/act:bg-xBlue/10"><i class="fa-solid fa-chart-column"></i></span>
+          <span>${metrics.views || '120'}</span>
+        </button>
+        <div class="flex items-center gap-1">
+          <button class="delete-btn p-1.5 rounded-full hover:text-xRed hover:bg-xRed/10 transition" title="Delete Post">
+            <i class="fa-regular fa-trash-can"></i>
+          </button>
+        </div>
+      `;
+
+      actions.querySelector(".delete-btn")?.addEventListener("click", (e) => {
+        e.stopPropagation();
+        postsData = postsData.filter(p => p.id !== post.id);
+        renderPosts();
+      });
+
+      contentCol.appendChild(actions);
+      card.appendChild(avatarCol);
+      card.appendChild(contentCol);
+
+      return card;
+    }
+
+    function renderPosts() {
+      const counts = {
+        all: postsData.length,
+        draft: postsData.filter(p => p.status === "draft").length,
+        scheduled: postsData.filter(p => p.status === "scheduled").length,
+        published: postsData.filter(p => p.status === "published").length,
+        failed: postsData.filter(p => p.status === "failed").length
+      };
+
+      document.getElementById("badge-all").textContent = counts.all;
+      document.getElementById("badge-draft").textContent = counts.draft;
+      document.getElementById("badge-scheduled").textContent = counts.scheduled;
+      document.getElementById("badge-published").textContent = counts.published;
+      document.getElementById("badge-failed").textContent = counts.failed;
+
+      document.getElementById("stat-published").textContent = counts.published;
+      document.getElementById("stat-scheduled").textContent = counts.scheduled;
+      document.getElementById("stat-draft").textContent = counts.draft;
+      document.getElementById("stat-failed").textContent = counts.failed;
+
+      const filtered = currentFilter === "all" 
+        ? postsData 
+        : postsData.filter(p => p.status === currentFilter);
+
+      postCountBadge.textContent = `${filtered.length} post${filtered.length === 1 ? '' : 's'}`;
+      postsContainer.innerHTML = "";
+
+      if (filtered.length === 0) {
+        emptyState.classList.remove("hidden");
+      } else {
+        emptyState.classList.add("hidden");
+        filtered.forEach(post => {
+          const card = buildTweetCard(post);
+          postsContainer.appendChild(card);
+        });
+      }
+    }
+
+    async function fetchPosts() {
+      if (useMock) {
+        updateStatus(true, "Offline Mock Mode Active");
+        return;
+      }
+      if (fetchInFlight) return;   // a slow tick must never stack up requests
+
+      fetchInFlight = true;
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT);
+      try {
+        const res = await fetch(API_URL, { cache: "no-store", signal: controller.signal });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+
+        if (Array.isArray(data)) {
+          postsData = data;
+          connectionBanner.classList.add("hidden");
+          const fingerprint = JSON.stringify(data);
+          if (fingerprint !== postsFingerprint) {   // repaint only on real changes
+            postsFingerprint = fingerprint;
+            renderPosts();
+          }
+          updateStatus(true, `Live · updated ${new Date().toLocaleTimeString()}`);
+        }
+      } catch (err) {
+        console.warn("API offline or unreachable, falling back to local simulation:", err.message);
+        updateStatus(false, "API Disconnected (Mock fallback)");
+        connectionBanner.classList.remove("hidden");
+
+        if (postsData.length === 0) {
+          postsData = [...MOCK_POSTS];
+          postsFingerprint = "";
+          renderPosts();
+        }
+      } finally {
+        clearTimeout(timeout);
+        fetchInFlight = false;
+      }
+    }
+
+    function updateStatus(online, message) {
+      if (online && !useMock) {
+        statusIndicator.className = "w-2.5 h-2.5 rounded-full bg-xGreen inline-block";
+        statusText.textContent = message || "API Live";
+      } else {
+        statusIndicator.className = "w-2.5 h-2.5 rounded-full bg-xRed inline-block";
+        statusText.textContent = message;
+      }
+    }
+
+    function setActiveTab(tabKey) {
+      currentFilter = tabKey;
+      
+      const titles = {
+        all: "All Posts",
+        draft: "Draft Posts",
+        scheduled: "Scheduled Posts",
+        published: "Published Posts",
+        failed: "Failed Posts"
+      };
+      pageTitle.textContent = titles[tabKey] || "Posts";
+
+      document.querySelectorAll(".nav-btn").forEach(btn => {
+        if (btn.dataset.tab === tabKey) {
+          btn.classList.add("text-xBlue", "font-bold");
+          btn.classList.remove("text-xMuted");
+        } else {
+          btn.classList.remove("text-xBlue", "font-bold");
+          btn.classList.add("text-xMuted");
+        }
+      });
+
+      document.querySelectorAll(".filter-tab").forEach(tab => {
+        if (tab.dataset.filter === tabKey) {
+          tab.classList.add("border-xBlue", "text-xLightText");
+          tab.classList.remove("border-transparent", "text-xMuted");
+        } else {
+          tab.classList.remove("border-xBlue", "text-xLightText");
+          tab.classList.add("border-transparent", "text-xMuted");
+        }
+      });
+
+      renderPosts();
+    }
+
+    document.querySelectorAll(".nav-btn").forEach(btn => {
+      btn.addEventListener("click", () => setActiveTab(btn.dataset.tab));
     });
 
-    // appendChild moves existing nodes, so order stays right without rebuilding
-    keep.forEach(node => grid.appendChild(node));
-    if (!grid.children.length) grid.appendChild(el("div", "empty-section", "nothing here"));
-  });
-}
+    document.querySelectorAll(".filter-tab").forEach(tab => {
+      tab.addEventListener("click", () => setActiveTab(tab.dataset.filter));
+    });
 
-/* --------------------------------------------------------------- polling -- */
+    toggleMockBtn.addEventListener("click", () => {
+      useMock = !useMock;
+      if (useMock) {
+        postsData = [...MOCK_POSTS];
+        toggleMockBtn.textContent = "Disable Mock Data";
+        updateStatus(false, "Mock Mode");
+      } else {
+        toggleMockBtn.textContent = "Use Mock Data";
+        postsFingerprint = "";   // force a repaint from the live payload
+        fetchPosts();
+      }
+      renderPosts();
+    });
 
-async function poll() {
-  try {
-    const res = await fetch(API, { cache: "no-store" });
-    if (!res.ok) throw new Error("HTTP " + res.status);
-    const posts = await res.json();
-    if (!Array.isArray(posts)) throw new Error("unexpected payload");
-    render(posts);
-    failures = 0;
-    bannerEl.hidden = true;
-    metaEl.textContent = "updated " + new Date().toLocaleTimeString() + " · " +
-      posts.length + (posts.length === 1 ? " post" : " posts");
-  } catch (err) {
-    failures += 1;
-    bannerEl.hidden = false;
-    bannerEl.textContent = "⚠ Cannot reach " + API + " (" +
-      (err && err.message ? err.message : err) + ")" +
-      (failures > 1 ? " — " + failures + " failed polls" : "") +
-      ". Is the bot running (python main.py)?";
-    metaEl.textContent = "disconnected";
-  }
-}
+    refreshBtn.addEventListener("click", () => {
+      refreshBtn.querySelector("i").classList.add("fa-spin");
+      fetchPosts().then(() => {
+        setTimeout(() => refreshBtn.querySelector("i").classList.remove("fa-spin"), 500);
+      });
+    });
 
-poll();
-setInterval(poll, POLL_MS);
-document.addEventListener("visibilitychange", () => { if (!document.hidden) poll(); });
+    const openModal = () => composeModal.classList.remove("hidden");
+    const closeModal = () => composeModal.classList.add("hidden");
 
-</script>
+    openComposeBtn.addEventListener("click", openModal);
+    emptyComposeBtn.addEventListener("click", openModal);
+    closeComposeBtn.addEventListener("click", closeModal);
+
+    document.getElementById("btn-toggle-err-field").addEventListener("click", () => {
+      errorFieldContainer.classList.toggle("hidden");
+    });
+
+    document.getElementById("btn-add-demo-img").addEventListener("click", () => {
+      const demoImages = [
+        "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=800&q=80",
+        "https://images.unsplash.com/photo-1550745165-9bc0b252726f?auto=format&fit=crop&w=800&q=80"
+      ];
+      composeMedia.value = demoImages.join(", ");
+    });
+
+    submitPostBtn.addEventListener("click", () => {
+      const content = composeText.value.trim();
+      const status = composeStatus.value;
+      const tag = composeTag.value.trim();
+      const rawMedia = composeMedia.value.trim();
+      const scheduleTime = composeScheduleTime.value;
+      const errorMsg = composeError.value.trim();
+
+      if (!content && !rawMedia) {
+        alert("Please enter post text or provide media URLs.");
+        return;
+      }
+
+      const mediaIds = rawMedia ? rawMedia.split(",").map(s => s.trim()).filter(Boolean) : [];
+
+      const newPost = {
+        id: "post-" + Date.now(),
+        status: status,
+        content: content,
+        tag: tag || null,
+        scheduled_at: scheduleTime ? new Date(scheduleTime).toISOString() : new Date().toISOString(),
+        media_ids: mediaIds,
+        error: status === "failed" ? (errorMsg || "Simulated submission failure") : null,
+        tweet_id: status === "published" ? String(Math.floor(Math.random() * 1e18)) : null,
+        metrics: { replies: 0, retweets: 0, likes: 0, views: "1" }
+      };
+
+      postsData.unshift(newPost);
+      renderPosts();
+
+      composeText.value = "";
+      composeTag.value = "";
+      composeMedia.value = "";
+      composeError.value = "";
+      closeModal();
+    });
+
+    closeLightbox.addEventListener("click", () => lightboxModal.classList.add("hidden"));
+    lightboxModal.addEventListener("click", (e) => {
+      if (e.target === lightboxModal) lightboxModal.classList.add("hidden");
+    });
+
+    document.getElementById("save-api-btn").addEventListener("click", () => {
+      const input = document.getElementById("api-endpoint-input").value.trim();
+      if (input) {
+        API_URL = input;
+        localStorage.setItem("dashboardApiUrl", input);   // survives a reload
+        postsFingerprint = "";
+        fetchPosts();
+      }
+    });
+
+    document.getElementById("test-api-btn").addEventListener("click", fetchPosts);
+
+    window.onload = function () {
+      const endpointInput = document.getElementById("api-endpoint-input");
+      if (endpointInput) endpointInput.value = API_URL;
+      fetchPosts();
+      pollTimer = setInterval(fetchPosts, POLL_INTERVAL);
+      document.addEventListener("visibilitychange", () => {
+        if (!document.hidden) {
+          postsFingerprint = "";   // catch up immediately when the tab returns
+          fetchPosts();
+        }
+      });
+      window.addEventListener("online", () => {
+        postsFingerprint = "";
+        fetchPosts();
+      });
+    };
+  </script>
 </body>
 </html>
-

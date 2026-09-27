@@ -46,6 +46,19 @@ def over_limit(text: str) -> bool:
     return effective_length(text) > X_CHAR_LIMIT
 
 
+def display_content(content: str, media_count: int = 0) -> str:
+    """Card/dashboard body for a post: media-only posts get a readable placeholder.
+
+    `content` stays the source of truth for publishing (a caption-less media
+    tweet is published with empty text + attachments), so this only ever feeds
+    the previews shown to the admin.
+    """
+    text = (content or "").strip()
+    if text:
+        return content or ""
+    return "📎 Media post" if media_count else ""
+
+
 def format_preview(post) -> str:
     """Build the HTML preview card shown in Telegram for a post row."""
     from datetime import timezone
@@ -70,7 +83,9 @@ def format_preview(post) -> str:
     if post.tag:
         lines.append(f"🏷 <code>{post.tag}</code>")
     body = post.content or ""
-    shown = body if len(body) <= 600 else body[:600] + "…"
+    media = list(getattr(post, "media", None) or [])
+    shown = display_content(body, len(media))
+    shown = shown if len(shown) <= 600 else shown[:600] + "…"
     lines.append("")
     lines.append(f"<pre>{escape_html(shown)}</pre>")
 
@@ -78,8 +93,9 @@ def format_preview(post) -> str:
     n = effective_length(final_text)
     warn = " ⚠️ <i>(will be trimmed on publish — over limit!)</i>" if n > X_CHAR_LIMIT else ""
     lines.append(f"📏 {n}/{X_CHAR_LIMIT} chars (final){warn}")
-    if post.media_path:
-        lines.append("📎 media attached")
+    if media:
+        n_media = len(media)
+        lines.append(f"📎 {n_media} media file{'s' if n_media > 1 else ''} attached")
     if post.scheduled_at and post.status == "scheduled":
         loc = to_admin_tz(post.scheduled_at.replace(tzinfo=timezone.utc))
         lines.append(f"🕐 fires at {loc:%Y-%m-%d %H:%M} ({crud.get_setting('timezone', 'UTC')})")
@@ -129,8 +145,9 @@ def format_thread_preview(post) -> str:
         warn = " ⚠️" if n > X_CHAR_LIMIT else ""
         if n > X_CHAR_LIMIT:
             over_any = True
-        media_note = f"  📎×{len(tt.media_ids or [])}" if tt.media_ids else ""
-        snippet = escape_html((tt.content or "").replace("\n", " ")[:90])
+        n_media = len(tt.media_ids or [])
+        media_note = f"  📎×{n_media}" if n_media else ""
+        snippet = escape_html(display_content(tt.content, n_media).replace("\n", " ")[:90])
         lines.append(f"<b>{tt.position + 1}.</b> [{n}/{X_CHAR_LIMIT}]{warn}{media_note} {snippet}")
     lines.append("")
     lines.append(f"📏 {total} chars total across {len(tweets)} tweets")

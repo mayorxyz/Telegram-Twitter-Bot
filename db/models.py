@@ -27,7 +27,10 @@ class Post(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     content: Mapped[str] = mapped_column(Text, default="")
+    # legacy single-file slot (kept so old rows/dashboards keep working)
     media_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    # local media files for this tweet: 1-4 images, or one video/gif
+    media_ids: Mapped[list | None] = mapped_column(JSON, nullable=True)
     # draft / scheduled / published / failed
     status: Mapped[str] = mapped_column(String(16), default="draft", index=True)
     scheduled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)  # UTC naive
@@ -47,6 +50,13 @@ class Post(Base):
     thread: Mapped["Thread | None"] = relationship(
         back_populates="post", cascade="all, delete-orphan", uselist=False, lazy="selectin"
     )
+
+    @property
+    def media(self) -> list[str]:
+        """Effective local media paths — `media_ids` wins, `media_path` is the legacy fallback."""
+        if self.media_ids:
+            return list(self.media_ids)
+        return [self.media_path] if self.media_path else []
 
     def __repr__(self) -> str:  # pragma: no cover
         return f"<Post {self.id} [{self.status}] {(self.content or '')[:30]!r}>"

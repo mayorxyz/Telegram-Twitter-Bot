@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 
 import tweepy
 
@@ -47,48 +48,102 @@ class PublishError(Exception):
     """Raised when a tweet cannot be published."""
 
 
-_MEDIA_KINDS = {".jpg": "image", ".jpeg": "image", ".png": "image",
-                ".webp": "image", ".gif": "image"}
+_MEDIA_KINDS = {
+    ".jpg": "image", ".jpeg": "image", ".png": "image",
+    ".webp": "image", ".gif": "gif",
+    ".mp4": "video", ".mov": "video", ".webm": "video",
+}
+
+# Twitter requires media_category for async uploads
+_MEDIA_CATEGORY = {
+    "image": "tweet_image",
+    "gif":   "tweet_gif",
+    "video": "tweet_video",
+}
 
 
-def _media_kind(path: str) -> str:
-    ext = os.path.splitext(path)[1].lower()
-    if ext in _MEDIA_KINDS:
-        return "image"
-    if ext in {".mp4", ".mov"}:
-        return "video"
-    return "unknown"
+def media_kind(path: str) -> str:
+    """'image' | 'gif' | 'video' | 'unknown' for a local media file path."""
+    return _MEDIA_KINDS.get(os.path.splitext(path)[1].lower(), "unknown")
 
 
-_MIME_BY_EXT = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png",
-                ".webp": "image/webp", ".gif": "image/gif",
-                ".mp4": "video/mp4", ".mov": "video/quicktime"}
+def _info_get(info, key: str, default=None):
+    """Read a PROCESSING_INFO field; tweepy hands it over as a plain dict."""
+    if info is None:
+        return default
+    if isinstance(info, dict):
+        return info.get(key, default)
+    return getattr(info, key, default)
 
 
-def _guess_mime(path: str) -> str:
-    """MIME type from file extension (used for video chunked uploads)."""
-    return _MIME_BY_EXT.get(os.path.splitext(path)[1].lower(), "application/octet-stream")
+def _await_processing(api: tweepy.API, media_id: str, timeout: int = 180) -> None:
+    """Poll PROCESSING_INFO until terminal state or timeout."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            status = api.get_media_upload_status(media_id)
+        except tweepy.TweepyException as e:
+            log.warning("Error checking media status: %s", e)
+            time.sleep(5)
+            continue
+            
+        info = getattr(status, "processing_info", None)
+        if info is None:
+            return  # no async processing needed
+        state = _info_get(info, "state")
+        if state in (None, "succeeded"):
+            return
+        if state == "failed":
+            err = _info_get(info, "error", {}) or {}
+            raise PublishError(f"Media processing failed: {_info_get(err, 'message', state)}")
+        wait = int(_info_get(info, "check_after_secs", 5) or 5)
+        log.debug("media %s processing… state=%s, retry in %ss", media_id, state, wait)
+        time.sleep(wait)
+    raise PublishError(f"Media processing timed out after {timeout}s")
+
 
 def upload_media(media_path: str) -> str:
-    """Upload one image/video and return its media_id_string (Free-tier safe)."""
+    """Upload image/gif/video; return media_id_string. Free-tier safe."""
     if config.DRY_RUN:
         return "dryrun-media-0000"
     if not config.twitter_configured():
         raise PublishError("Twitter credentials are not configured in .env")
     if not media_path or not os.path.exists(media_path):
         raise PublishError(f"Media file missing: {media_path}")
+
+    kind = media_kind(media_path)
+    if kind == "unknown":
+        raise PublishError(f"Unsupported media type: {media_path}")
+
+    category = _MEDIA_CATEGORY[kind]
+
     try:
-        kind = _media_kind(media_path)
-        mime = _guess_mime(media_path)
-        if kind == "video":
-            uploaded = get_api().create_media_upload(media_path, media_type=mime)
-        else:
-            uploaded = get_api().media_upload(media_path)
+        api = get_api()
+        # tweepy's media_upload drives INIT/APPEND/FINALIZE for us. Only the
+        # chunked path (video/gif) understands wait_for_async_finalize — handing
+        # that kwarg to a simple image upload raises TypeError.
+        upload_kwargs = {
+            "filename": media_path,
+            "media_category": category,
+            "chunked": kind in ("video", "gif"),
+        }
+        if kind in ("video", "gif"):
+            upload_kwargs["wait_for_async_finalize"] = False  # we poll manually
+        uploaded = api.media_upload(**upload_kwargs)
+        
+        if kind in ("video", "gif"):
+            _await_processing(api, uploaded.media_id_string)
+
+        log.info("uploaded %s media_id=%s", kind, uploaded.media_id_string)
         return uploaded.media_id_string
+
+    except tweepy.TweepyException as exc:
+        log.exception("media upload failed for %s", media_path)
+        raise PublishError(f"Media upload failed: {exc}") from exc
+    except PublishError:
+        raise
     except Exception as exc:
         log.exception("media upload failed for %s", media_path)
-        if isinstance(exc, tweepy.TweepyException):
-            raise
         raise PublishError(f"Media upload failed: {exc}") from exc
 
 
@@ -107,16 +162,18 @@ def publish_tweet(text: str, media_paths: list[str] | None = None,
     """
     if config.DRY_RUN:
         import random
-        log.info("[DRY RUN] would publish: %s", text)
+        log.info("[DRY RUN] would publish: %s%s", text,
+         f" + {len(media_paths)} media file(s)" if media_paths else "")
         return f"dryrun-{random.randint(1000,9999)}"
     if not config.twitter_configured():
         raise PublishError("Twitter credentials are not configured in .env")
     if done_ids is not None and position is not None and position in done_ids:
         return done_ids[position]
-    if not text or not text.strip():
-        if not media_paths:
-            raise PublishError("Empty tweet body")
-        text = ""
+        
+    # X API v2 rejects empty strings. If we only have media, text must be None.
+    clean_text = text.strip() if text else None
+    if not clean_text and not media_paths:
+        raise PublishError("Empty tweet body")
 
     client = get_client()
     media_ids: list[str] = []
@@ -130,10 +187,12 @@ def publish_tweet(text: str, media_paths: list[str] | None = None,
         media_ids.append(mid)
 
     try:
-        resp = client.create_tweet(text=text or None,
-                                   media_ids=media_ids or None,
-                                   quote_tweet_id=None,
-                                   reply_to=reply_to)
+        resp = client.create_tweet(
+            text=clean_text,
+            media_ids=media_ids or None,
+            quote_tweet_id=None,
+            in_reply_to_tweet_id=reply_to  # FIXED: was reply_to=reply_to
+        )
         tweet_id = resp.data["id"]
         log.info("published tweet %s%s", tweet_id,
                  f" (reply_to={reply_to})" if reply_to else "")

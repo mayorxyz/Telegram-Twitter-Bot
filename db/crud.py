@@ -19,11 +19,13 @@ def _to_naive_utc(dt: datetime) -> datetime:
 # ---------------------------------------------------------------- posts -----
 
 def create_post(content: str, media_path: str | None = None,
+                media_ids: list[str] | None = None,
                 auto_format: bool = True, tag: str | None = None,
                 status: str = "draft") -> Post:
     with get_session() as s:
-        p = Post(content=content, media_path=media_path, auto_format=auto_format,
-                 tag=tag, status=status)
+        p = Post(content=content, media_path=media_path,
+                 media_ids=[str(m) for m in (media_ids or [])][:MAX_MEDIA_PER_TWEET] or None,
+                 auto_format=auto_format, tag=tag, status=status)
         s.add(p)
         s.commit()
         s.refresh(p)
@@ -56,7 +58,7 @@ def delete_post(post_id: int) -> bool:
         p = s.get(Post, post_id)
         if p is None:
             return False
-        paths = [p.media_path] if p.media_path else []
+        paths = list(p.media)
         for t in (p.thread.tweets if p.thread else []):
             paths.extend(t.media_ids or [])
         s.delete(p)  # cascades to thread + thread tweets
@@ -75,6 +77,7 @@ def duplicate_post(post_id: int) -> Post | None:
     if src is None:
         return None
     clone = create_post(content=src.content, media_path=src.media_path,
+                        media_ids=list(src.media) or None,
                         auto_format=src.auto_format, tag=src.tag, status="draft")
     if src.thread:  # threads are cloned tweet-by-tweet (media paths shared until save)
         create_thread(clone.id, [
@@ -82,6 +85,49 @@ def duplicate_post(post_id: int) -> Post | None:
             for t in src.thread.tweets
         ])
     return clone
+
+
+def add_post_media(post_id: int, paths: list[str]) -> Post | None:
+    """Append local media files to a single-tweet post (deduped, capped at 4).
+
+    Missing files are ignored and the legacy `media_path` slot is folded into
+    `media_ids` so exactly one place ever owns a post's media.
+    """
+    with get_session() as s:
+        p = s.get(Post, post_id)
+        if p is None:
+            return None
+        existing = list(p.media)
+        keep = [m for m in existing if m in paths and os.path.isfile(m)]
+        merged = [m for m in dict.fromkeys(keep + [str(x) for x in paths])
+                  if os.path.isfile(m)]
+        p.media_ids = merged[:MAX_MEDIA_PER_TWEET] or None
+        p.media_path = None
+        s.commit()
+        s.refresh(p)
+        return p
+
+
+def remove_post_media(post_id: int, path: str | None = None) -> Post | None:
+    """Detach one file (or every file when `path` is None) and delete the local copy."""
+    with get_session() as s:
+        p = s.get(Post, post_id)
+        if p is None:
+            return None
+        current = list(p.media)
+        dropped = current if path is None else [m for m in current if m == path]
+        p.media_ids = [m for m in current if m not in dropped][:MAX_MEDIA_PER_TWEET] or None
+        p.media_path = None
+        s.commit()
+        s.refresh(p)
+        post = p
+    for f in dropped:
+        try:
+            if f and os.path.isfile(f):
+                os.remove(f)
+        except OSError:
+            pass
+    return post
 
 
 def list_posts(statuses: tuple[str, ...] | None = None) -> list[Post]:

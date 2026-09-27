@@ -90,7 +90,7 @@ async def publish_post(application: Application, post_id: int, manual: bool = Fa
 
 async def _publish_single(application: Application, post) -> None:
     text = final_text_for(post)
-    media_paths = [post.media_path] if post.media_path else None
+    media_paths = list(post.media) or None
     tweet_id = publish_tweet(text, media_paths)
     crud.update_post(post.id, status="published",
                      published_at=datetime.now(timezone.utc),
