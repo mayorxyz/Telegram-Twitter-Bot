@@ -263,11 +263,16 @@ async def _notify_failure(application: Application, post_id: int, error: str) ->
     kb = InlineKeyboardMarkup(rows)
     try:
         if post.tg_message_id:
-            await application.bot.edit_message_text(chat_id=config.ADMIN_ID,
-                                                    message_id=post.tg_message_id,
-                                                    text=html, reply_markup=kb, parse_mode="HTML")
-        else:
-            await application.bot.send_message(chat_id=config.ADMIN_ID, text=html,
-                                               reply_markup=kb, parse_mode="HTML")
+            try:
+                await application.bot.edit_message_text(
+                    chat_id=config.ADMIN_ID, message_id=post.tg_message_id,
+                    text=html, reply_markup=kb, parse_mode="HTML")
+                return
+            except Exception as exc:
+                if "not modified" in str(exc).lower():
+                    return
+                # stale id, deleted message, or media card: send a fresh one
+        await application.bot.send_message(chat_id=config.ADMIN_ID, text=html,
+                                           reply_markup=kb, parse_mode="HTML")
     except Exception:
         log.exception("failure notify failed")
