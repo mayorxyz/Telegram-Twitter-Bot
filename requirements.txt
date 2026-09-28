@@ -7,3 +7,5 @@ httpx==0.25.2
 feedparser==6.0.10
 croniter==2.0.1
 tzdata; sys_platform == 'win32'
+groq
+

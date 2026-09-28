@@ -33,13 +33,50 @@ def strip_markdown(text: str) -> str:
     return out.strip()
 
 
-def effective_length(text: str) -> int:
-    """X counts URLs as 23 chars regardless of real length."""
-    def _url_len(m: re.Match) -> str:
+def twitter_len(text: str) -> int:
+    """X/Twitter weighted length: every URL counts as exactly 23 chars.
+
+    This is the single source of truth for "how long will X think this is".
+    ``effective_length`` is kept as the historical name and delegates here so
+    the 280-char limit checks, previews and the publish guard all agree.
+    """
+    if not text:
+        return 0
+
+    def _url_len(m: "re.Match") -> str:
         return "x" * 23
 
     counted = re.sub(r"https?://\S+", _url_len, text)
     return len(counted)
+
+
+def effective_length(text: str) -> int:
+    """X counts URLs as 23 chars regardless of real length."""
+    return twitter_len(text)
+
+
+def truncate_to_limit(text: str, limit: int = 280, ellipsis: str = "...") -> str:
+    """Hard-truncate ``text`` to ``limit`` twitter-weighted chars at a word
+    boundary, appending ``ellipsis`` when trimming was needed.
+
+    Safety net so we never push an over-280 string to X. The budget accounts
+    for the ellipsis; whole words are dropped rather than cut mid-word. URLs
+    are weighed as 23 chars (via ``twitter_len``) while choosing the cut.
+    """
+    if twitter_len(text) <= limit:
+        return text
+    budget = max(0, limit - len(ellipsis))
+    words = text.split()
+    candidate = ""
+    for w in words:
+        trial = (candidate + " " + w) if candidate else w
+        if twitter_len(trial) > budget:
+            break
+        candidate = trial
+    if not candidate:
+        # A single over-budget token (e.g. one giant URL) — hard-cut by chars.
+        candidate = text[:budget]
+    return candidate + ellipsis
 
 
 def over_limit(text: str) -> bool:

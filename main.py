@@ -279,7 +279,12 @@ async def ingest_text(update, context) -> None:
     text = (msg.text or "").strip()
     if not text:
         return
+    from utils.formatting import twitter_len
+    if twitter_len(text) > config.X_CHAR_LIMIT:
+        await editor._handle_long_text(update, context, text=text)
+        return
     await drafts.new_draft_message(update, context, text)
+
 
 
 async def ingest_photo(update, context) -> None:
@@ -308,8 +313,8 @@ def build_application() -> Application:
     token = os.getenv("BOT_TOKEN", config.BOT_TOKEN)
     if not token:
         raise SystemExit("BOT_TOKEN is not set — copy .env.example to .env and fill it in.")
-    if not config.ADMIN_ID:
-        raise SystemExit("ADMIN_ID is not set — copy .env.example to .env and fill it in.")
+    if not config.ADMIN_IDS:
+        raise SystemExit("ADMIN_ID or ADMIN_IDS is not set — copy .env.example to .env and fill it in.")
 
     # Build the app with the startup/shutdown hooks attached in the builder
     app = (
@@ -352,9 +357,11 @@ def build_application() -> Application:
     # 4) Queue delete two-step (10s undo window) + post-now aliases outside q: namespace
     app.add_handler(CallbackQueryHandler(queue.queue_callback,
                                          pattern=r"^(del_confirm|del_undo|post_now):"))
-    # 5) Editor flow buttons: ed_save, ed_cancel, custom_time
+    # 5) Editor flow buttons: ed_save, ed_cancel, custom_time, comp
     app.add_handler(CallbackQueryHandler(editor.editor_callback,
-                                         pattern=r"^(ed_save|ed_cancel|custom_time):"))
+                                         pattern=r"^(ed_save|ed_cancel|custom_time|comp|comp_):?"))
+
+
     # 6) Settings menu + timezone picker: set:, tz:
     app.add_handler(CallbackQueryHandler(settings.settings_callback, pattern=r"^(set|tz):"))
     # 7) Templates management + injection into drafts: tpl:  (no conflict with t:)

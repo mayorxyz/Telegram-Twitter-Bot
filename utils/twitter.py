@@ -12,6 +12,7 @@ import time
 import tweepy
 
 from utils import config
+from utils.formatting import twitter_len, truncate_to_limit
 
 log = logging.getLogger(__name__)
 
@@ -174,6 +175,15 @@ def publish_tweet(text: str, media_paths: list[str] | None = None,
     clean_text = text.strip() if text else None
     if not clean_text and not media_paths:
         raise PublishError("Empty tweet body")
+
+    # Hard guarantee: never push an over-limit string to X. URL-aware length,
+    # word-boundary trim as the final safety net (callers should pre-compress,
+    # but this protects every publish path, including scheduled & thread retry).
+    if clean_text:
+        n = twitter_len(clean_text)
+        if n > config.X_CHAR_LIMIT:
+            log.warning("tweet is %d/%d chars — trimming before publish", n, config.X_CHAR_LIMIT)
+            clean_text = truncate_to_limit(clean_text, config.X_CHAR_LIMIT)
 
     client = get_client()
     media_ids: list[str] = []

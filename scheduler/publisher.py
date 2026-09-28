@@ -223,11 +223,17 @@ async def _notify_success(application: Application, post, extra: str = "") -> No
     ]])
     try:
         if post.tg_message_id:
-            await application.bot.edit_message_text(chat_id=chat_id, message_id=post.tg_message_id,
-                                                    text=html, reply_markup=kb, parse_mode="HTML")
-        else:
-            await application.bot.send_message(chat_id=chat_id, text=html,
-                                               reply_markup=kb, parse_mode="HTML")
+            try:
+                await application.bot.edit_message_text(
+                    chat_id=chat_id, message_id=post.tg_message_id,
+                    text=html, reply_markup=kb, parse_mode="HTML")
+                return
+            except Exception:
+                # Media posts (photo/video cards) can't be edited with edit_message_text.
+                # Fall through to send a fresh success notification instead.
+                pass
+        await application.bot.send_message(chat_id=chat_id, text=html,
+                                           reply_markup=kb, parse_mode="HTML")
     except Exception:
         log.exception("success notify failed")
 

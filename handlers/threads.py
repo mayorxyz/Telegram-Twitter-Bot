@@ -171,14 +171,25 @@ async def handle_thread_input(update: Update, context: ContextTypes.DEFAULT_TYPE
             await msg.reply_text(f"⚠️ Max {crud.MAX_THREAD_TWEETS} tweets per thread reached.")
             return True
         
+        note = None
+        from utils.formatting import twitter_len, truncate_to_limit
+        if twitter_len(text) > config.X_CHAR_LIMIT:
+            await msg.reply_text(f"⚠️ Tweet is {twitter_len(text)} chars (limit: 280). Compressing with Groq AI...")
+            from utils.groq_helper import compress_tweet, GroqError
+            try:
+                text = await compress_tweet(text)
+            except GroqError:
+                text = truncate_to_limit(text, config.X_CHAR_LIMIT)
+            note = f"✏️ Tweet compressed to {twitter_len(text)}/280 chars with Groq AI."
+
         # Fill empty tweets first before appending
         empty_idx = next((i for i, t in enumerate(tweets) if not t["content"].strip() and not t["media_ids"]), None)
         if empty_idx is not None:
             tweets[empty_idx]["content"] = text
-            note = f"✏️ Tweet {empty_idx + 1} filled."
+            note = note or f"✏️ Tweet {empty_idx + 1} filled."
         else:
             tweets.append({"content": text, "media_ids": []})
-            note = f"➕ Tweet {len(tweets)} added."
+            note = note or f"➕ Tweet {len(tweets)} added."
         
         context.user_data.pop("th_flow", None)
         _save(context, post_id, tweets)
@@ -199,13 +210,26 @@ async def handle_thread_input(update: Update, context: ContextTypes.DEFAULT_TYPE
             context.user_data.pop("th_flow", None)
             await msg.reply_text("ℹ️ That tweet position is gone.")
             return True
+
+        note = f"✏️ Tweet {pos + 1} updated."
+        from utils.formatting import twitter_len, truncate_to_limit
+        if twitter_len(text) > config.X_CHAR_LIMIT:
+            await msg.reply_text(f"⚠️ Tweet {pos + 1} is {twitter_len(text)} chars (limit: 280). Compressing with Groq AI...")
+            from utils.groq_helper import compress_tweet, GroqError
+            try:
+                text = await compress_tweet(text)
+            except GroqError:
+                text = truncate_to_limit(text, config.X_CHAR_LIMIT)
+            note = f"✏️ Tweet {pos + 1} compressed to {twitter_len(text)}/280 chars with Groq AI."
+
         tweets[pos]["content"] = text
         context.user_data.pop("th_flow", None)
         _save(context, post_id, tweets)
         
         fresh_post = crud.get_post(post_id)
-        await _show_builder(context, chat_id, fresh_post, note=f"✏️ Tweet {pos + 1} updated.", force_new_message=True)
+        await _show_builder(context, chat_id, fresh_post, note=note, force_new_message=True)
         return True
+
 
     return False
 

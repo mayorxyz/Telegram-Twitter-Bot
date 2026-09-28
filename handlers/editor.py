@@ -16,7 +16,8 @@ from telegram.ext import ContextTypes
 
 from db import crud
 from utils import config
-from utils.formatting import effective_length, escape_html, format_preview
+from utils.formatting import (effective_length, escape_html, format_preview,
+                              twitter_len, truncate_to_limit)
 from utils.timeutil import from_admin_local, utc_now_aware
 from utils.ui import is_admin, update_preview
 
@@ -90,6 +91,11 @@ async def handle_flow_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         if not new_text.strip():
             await msg.reply_text("⚠️ Empty text — send real content or ↩️ Cancel edit.")
             return True
+        # Over the X limit → offer AI compress / thread-split before saving raw.
+        if twitter_len(new_text) > config.X_CHAR_LIMIT:
+            context.user_data.pop("flow", None)
+            await _handle_long_text(update, context, post, new_text, chat_id, rss)
+            return True
         post = crud.update_post(post_id, content=new_text)
         context.user_data.pop("flow", None)
         n = effective_length(new_text)
@@ -154,7 +160,21 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
     flow = context.user_data.get("flow")
     if flow and flow[0] == "edit_content":
-        post = crud.add_post_media(flow[1], [path])
+        _, post_id, rss = flow
+        post = crud.add_post_media(post_id, [path])
+        caption = (msg.caption or "").strip()
+        if caption:
+            if twitter_len(caption) > config.X_CHAR_LIMIT:
+                context.user_data.pop("flow", None)
+                await _handle_long_text(update, context, post, caption, msg.chat.id, rss)
+                return
+            post = crud.update_post(post_id, content=caption)
+            n = effective_length(caption)
+            extra = (f"📎 <b>Media attached & caption updated</b> · {n}/{config.X_CHAR_LIMIT} chars"
+                     + (" ⚠️ over limit!" if n > config.X_CHAR_LIMIT else ""))
+            await update_preview(context, msg.chat.id, post, text_extra=extra, rss=rss)
+            context.user_data.pop("flow", None)
+            return
         await update_preview(context, msg.chat.id, post, text_extra="📎 Media attached.")
         return
     # Caption-less media drafts store empty content: the card renders "📎 Media post"
@@ -225,3 +245,237 @@ async def editor_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             "• <code>YYYY-MM-DD HH:MM</code>",
             reply_markup=kb, parse_mode="HTML")
         return
+
+    if head == "comp" or head.startswith("comp_"):
+        await _handle_compression_callback(update, context, head, parts)
+        return
+
+
+async def _handle_long_text(update: Update, context: ContextTypes.DEFAULT_TYPE,
+                           post=None, text: str = "", chat_id: int | None = None,
+                           rss: bool = False) -> None:
+    """Handle tweet text > 280 chars: compress via Groq AI & present action buttons."""
+    if isinstance(post, str) and not text:
+        text = post
+        post = None
+
+    text = (text or "").strip()
+    text_len = twitter_len(text)
+    cid = chat_id or (update.effective_chat.id if update.effective_chat else 0)
+    post_id = post.id if post else 0
+
+    status_text = f"⚠️ Text is {text_len} chars (limit: 280). Compressing with Groq AI..."
+    msg = None
+    if update.callback_query:
+        try:
+            msg = await update.callback_query.edit_message_text(status_text)
+        except Exception:
+            msg = await context.bot.send_message(chat_id=cid, text=status_text)
+    elif update.message:
+        msg = await update.message.reply_text(status_text)
+    else:
+        msg = await context.bot.send_message(chat_id=cid, text=status_text)
+
+    from utils.groq_helper import compress_tweet, GroqError
+
+    try:
+        compressed = await compress_tweet(text)
+    except GroqError as exc:
+        log.warning("Groq compression failed: %s — using fallback trim", exc)
+        compressed = truncate_to_limit(text, config.X_CHAR_LIMIT)
+    except Exception as exc:
+        log.exception("Unexpected error in compress_tweet: %s", exc)
+        compressed = truncate_to_limit(text, config.X_CHAR_LIMIT)
+
+    comp_len = twitter_len(compressed)
+
+    if post:
+        post = crud.update_post(post.id, content=compressed)
+
+    context.user_data["comp_state"] = {
+        "original_text": text,
+        "compressed_text": compressed,
+        "post_id": post.id if post else post_id,
+        "rss": rss,
+    }
+
+    # If post has attached media, render full draft preview card with media!
+    if post and getattr(post, "media", None) and len([p for p in post.media if p]):
+        from utils.ui import show_preview
+        if msg:
+            try:
+                await msg.delete()
+            except Exception:
+                pass
+        await show_preview(
+            context, cid, post,
+            text_extra=f"✨ <b>Caption compressed with Groq AI ({comp_len}/280)!</b>",
+            rss=rss
+        )
+        return
+
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
+    reply_text = f"✅ <b>Compressed ({comp_len}/280):</b>\n\n{escape_html(compressed)}"
+    kb = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("✅ Post Now", callback_data=f"comp:post:{post.id if post else post_id}"),
+            InlineKeyboardButton("✏️ Edit", callback_data=f"comp:edit:{post.id if post else post_id}"),
+            InlineKeyboardButton("🧵 Make Thread", callback_data=f"comp:thread:{post.id if post else post_id}"),
+        ]
+    ])
+
+    try:
+        if msg:
+            await msg.edit_text(reply_text, reply_markup=kb, parse_mode="HTML")
+        else:
+            await context.bot.send_message(chat_id=cid, text=reply_text, reply_markup=kb, parse_mode="HTML")
+    except Exception:
+        await context.bot.send_message(chat_id=cid, text=reply_text, reply_markup=kb, parse_mode="HTML")
+
+
+async def _handle_compression_callback(update: Update, context: ContextTypes.DEFAULT_TYPE,
+                                        head: str, parts: list[str]) -> None:
+    """Callback handler for compression flow buttons: comp:post, comp:edit, comp:thread, comp:post_thread."""
+    cq = update.callback_query
+    action = ""
+    post_id = 0
+
+    if head.startswith("comp_"):
+        action = head[5:]
+        if len(parts) > 1 and parts[1].isdigit():
+            post_id = int(parts[1])
+    elif head == "comp" and len(parts) > 1:
+        action = parts[1]
+        if len(parts) > 2 and parts[2].isdigit():
+            post_id = int(parts[2])
+
+    state = context.user_data.get("comp_state", {})
+    original_text = state.get("original_text", "")
+    compressed_text = state.get("compressed_text", "")
+    rss = state.get("rss", False)
+    chat_id = update.effective_chat.id
+
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+    from utils.groq_helper import GroqError, make_thread
+    from utils.twitter import PublishError, publish_tweet
+    from utils.ui import show_preview
+
+    if action == "post":
+        post = crud.get_post(post_id) if post_id else None
+        text_to_post = compressed_text or (post.content if post else "")
+        if not text_to_post:
+            await cq.edit_message_text("❌ No text found to post.")
+            return
+
+        # Hard validate before publish
+        if twitter_len(text_to_post) > config.X_CHAR_LIMIT:
+            text_to_post = truncate_to_limit(text_to_post, config.X_CHAR_LIMIT)
+
+        media_paths = list(post.media) if post and getattr(post, "media", None) else None
+
+        try:
+            tweet_id = publish_tweet(text_to_post, media_paths=media_paths)
+            if post:
+                post = crud.update_post(post_id, content=text_to_post, status="published", tweet_id=tweet_id)
+            else:
+                post = crud.create_post(content=text_to_post)
+                post = crud.update_post(post.id, status="published", tweet_id=tweet_id)
+            
+            await show_preview(context, chat_id, post, text_extra=f"🚀 <b>Published to X!</b> (Tweet ID: <code>{escape_html(str(tweet_id))}</code>)")
+        except PublishError as exc:
+            await cq.edit_message_text(f"❌ Failed to publish: {escape_html(str(exc))}", parse_mode="HTML")
+        return
+
+    if action == "edit":
+        text_to_edit = compressed_text
+        if not text_to_edit and post_id:
+            p = crud.get_post(post_id)
+            text_to_edit = p.content if p else ""
+
+        if post_id:
+            post = crud.update_post(post_id, content=text_to_edit)
+        else:
+            post = crud.create_post(content=text_to_edit)
+
+        # Show standard draft preview card so user gets full interactivity
+        await show_preview(context, chat_id, post, text_extra="📝 <b>Compressed draft created.</b> Edit, schedule, or post below:")
+        return
+
+    if action == "thread":
+        if not original_text and post_id:
+            p = crud.get_post(post_id)
+            if p:
+                original_text = p.content or ""
+
+        if not original_text:
+            await cq.edit_message_text("❌ Original text missing for thread creation.")
+            return
+
+        await cq.edit_message_text("⏳ Splitting text into thread with Groq AI...")
+        try:
+            thread_parts = await make_thread(original_text)
+        except GroqError as exc:
+            await cq.edit_message_text(f"❌ Thread generation failed: {escape_html(str(exc))}", parse_mode="HTML")
+            return
+        except Exception as exc:
+            log.exception("make_thread failed")
+            await cq.edit_message_text(f"❌ Thread generation failed: {escape_html(str(exc))}", parse_mode="HTML")
+            return
+
+        if isinstance(thread_parts, str) and thread_parts.startswith("Error"):
+            await cq.edit_message_text(f"❌ {escape_html(thread_parts)}", parse_mode="HTML")
+            return
+
+        # Create real thread in DB so it integrates into the bot's thread builder
+        if post_id:
+            post = crud.get_post(post_id)
+            if post:
+                post = crud.update_post(post_id, content=thread_parts[0])
+            else:
+                post = crud.create_post(content=thread_parts[0])
+        else:
+            post = crud.create_post(content=thread_parts[0])
+
+        crud.create_thread(post.id, [{"content": c, "media_ids": []} for c in thread_parts])
+
+        from handlers.threads import _show_builder
+        await _show_builder(context, chat_id, post, note="🧵 <b>Thread created with Groq AI!</b> Review, edit tweets, or post:")
+        return
+
+    if action == "post_thread":
+        thread_parts = context.user_data.get("comp_thread_parts", [])
+        post = crud.get_post(post_id) if post_id else None
+
+        if not thread_parts and post and getattr(post, "thread", None):
+            thread_parts = [t.content for t in sorted(post.thread.tweets, key=lambda x: x.position)]
+
+        if not thread_parts:
+            await cq.edit_message_text("❌ No thread content found to publish.")
+            return
+
+        await cq.edit_message_text("🚀 Publishing thread to X...")
+        prev_id = None
+        published_ids = []
+        media_paths = list(post.media) if post and getattr(post, "media", None) else None
+
+        for idx, tweet_text in enumerate(thread_parts):
+            if twitter_len(tweet_text) > config.X_CHAR_LIMIT:
+                tweet_text = truncate_to_limit(tweet_text, config.X_CHAR_LIMIT)
+
+            curr_media = media_paths if (idx == 0 and media_paths) else None
+            try:
+                tid = publish_tweet(tweet_text, media_paths=curr_media, reply_to=prev_id)
+                prev_id = tid
+                published_ids.append(tid)
+            except PublishError as exc:
+                await cq.edit_message_text(f"❌ Thread posting failed at tweet {idx+1}: {escape_html(str(exc))}", parse_mode="HTML")
+                return
+
+        if post:
+            crud.update_post(post_id, status="published", tweet_id=published_ids[0])
+
+        await cq.edit_message_text(f"🚀 Published thread of {len(published_ids)} tweets to X!", parse_mode="HTML")
+        return
+
+

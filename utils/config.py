@@ -42,7 +42,13 @@ def _env_int(name: str, default: int) -> int:
 
 
 BOT_TOKEN: str = _env("BOT_TOKEN")
-ADMIN_ID: int = _env_int("ADMIN_ID", 0)
+
+ADMIN_IDS: set[int] = {
+    int(x.strip())
+    for x in os.getenv("ADMIN_IDS", os.getenv("ADMIN_ID", "0")).split(",")
+    if x.strip() and x.strip().isdigit()
+}
+ADMIN_ID: int = next(iter(ADMIN_IDS), 0)  # legacy compat / primary admin fallback
 
 # X/Twitter credentials: X_* (documented) first, legacy TWITTER_* as fallback.
 TWITTER_API_KEY: str = _env("X_API_KEY", "TWITTER_API_KEY")
@@ -51,6 +57,12 @@ TWITTER_ACCESS_TOKEN: str = _env("X_ACCESS_TOKEN", "TWITTER_ACCESS_TOKEN")
 TWITTER_ACCESS_SECRET: str = _env("X_ACCESS_TOKEN_SECRET", "TWITTER_ACCESS_SECRET")
 TWITTER_BEARER_TOKEN: str = _env("X_BEARER_TOKEN", "TWITTER_BEARER_TOKEN")
 DRY_RUN: bool = os.environ.get("DRY_RUN", "0").lower() in {"1", "true", "yes"}
+
+# Groq (llama-3.3-70b-versatile) — optional auto-compress / thread-split of
+# over-limit tweets. Empty key ⇒ the AI features are disabled and over-limit
+# tweets fall back to a hard word-boundary trim instead of calling the API.
+GROQ_API_KEY: str = os.getenv("GROQ_API_KEY") or _env("GROQ_API_KEY")
+GROQ_MODEL: str = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile").strip()
 
 RSS_URL: str = os.environ.get("RSS_URL", "")
 RSS_MAX_PER_DAY: int = _env_int("RSS_MAX_PER_DAY", 5)
@@ -77,3 +89,7 @@ X_CHAR_LIMIT: int = 280
 
 def twitter_configured() -> bool:
     return all([TWITTER_API_KEY, TWITTER_API_SECRET, TWITTER_ACCESS_TOKEN, TWITTER_ACCESS_SECRET])
+
+
+def groq_configured() -> bool:
+    return bool(GROQ_API_KEY)

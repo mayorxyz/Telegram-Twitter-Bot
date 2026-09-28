@@ -74,11 +74,21 @@ async def inject_template_to_thread(context: ContextTypes.DEFAULT_TYPE, chat_id:
 async def new_draft_message(update: Update, context: ContextTypes.DEFAULT_TYPE,
                             text: str, media_ids: list[str] | None = None) -> int:
     """Create a draft row and push the preview card. Returns message id."""
+    from utils.formatting import twitter_len
+    from utils import config
+
     post = crud.create_post(content=text, media_ids=media_ids,
                             auto_format=crud.get_bool("auto_format", True))
+
+    if text and twitter_len(text) > config.X_CHAR_LIMIT:
+        from handlers.editor import _handle_long_text
+        await _handle_long_text(update, context, post, text, update.effective_chat.id)
+        return 0
+
     mid = await show_preview(context, update.effective_chat.id, post,
                              text_extra="📝 <b>New draft</b> — confirm, edit or cancel:")
     return mid
+
 
 
 async def push_rss_draft(bot, post) -> None:

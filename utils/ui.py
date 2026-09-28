@@ -21,7 +21,7 @@ def is_admin(update: Update) -> bool:
         user = update.effective_user
     elif update.callback_query and update.callback_query.from_user:
         user = update.callback_query.from_user
-    return bool(user and user.id == config.ADMIN_ID)
+    return bool(user and user.id in config.ADMIN_IDS)
 
 
 async def deny(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
