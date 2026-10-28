@@ -30,7 +30,10 @@ def _set_sqlite_pragma(dbapi_connection, connection_record):  # pragma: no cover
 # already exists and SQLite can only add columns one at a time, so keep this map
 # in sync with db/models.py — it runs on every startup and is a no-op once applied.
 _ADDED_COLUMNS: dict[str, dict[str, str]] = {
-    "posts": {"media_ids": "JSON"},
+    "posts": {
+        "media_ids": "JSON",
+        "publish_mode": "TEXT DEFAULT 'api'",
+    },
 }
 
 

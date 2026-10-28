@@ -25,6 +25,7 @@ def entry_keyboard(post_id: int) -> InlineKeyboardMarkup:
             InlineKeyboardButton("📅 Pick Date", callback_data=f"cal:{post_id}:open"),
             InlineKeyboardButton("⚡ Post Now", callback_data=f"now:{post_id}"),
         ],
+        [InlineKeyboardButton("🌐 Open in X", callback_data=f"post_intent:{post_id}")],
         [InlineKeyboardButton("❌ Cancel", callback_data=f"d:{post_id}:cancel")],
     ])
 

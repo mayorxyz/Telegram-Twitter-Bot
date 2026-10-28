@@ -31,8 +31,10 @@ class Post(Base):
     media_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
     # local media files for this tweet: 1-4 images, or one video/gif
     media_ids: Mapped[list | None] = mapped_column(JSON, nullable=True)
-    # draft / scheduled / published / failed
+    # draft / scheduled / published / failed / posted_manual
     status: Mapped[str] = mapped_column(String(16), default="draft", index=True)
+    # publish mode: 'api' (Tweepy, default) or 'intent' (X web-intent link)
+    publish_mode: Mapped[str] = mapped_column(String(8), default="api", server_default="api")
     scheduled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)  # UTC naive
     published_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)  # UTC naive
     tag: Mapped[str | None] = mapped_column(String(32), nullable=True)

@@ -5,6 +5,7 @@ import logging
 from datetime import date, datetime, timedelta, timezone
 
 from telegram import Update
+from telegram.error import BadRequest
 from telegram.ext import ContextTypes
 
 from db import crud
@@ -18,6 +19,7 @@ from handlers.calendar_kb import (
 )
 from scheduler.jobs import schedule_post_job
 from utils.formatting import escape_html, format_preview
+from utils.intent_link import send_intent_post, send_intent_thread
 from utils.timeutil import admin_tz, to_admin_tz, utc_now_aware
 from utils.ui import is_admin, show_preview
 
@@ -190,6 +192,29 @@ async def sched_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         if not ok:
             log.info("manual publish of %s failed", post_id)
 
+    elif kind == "post_intent":
+        post_id = int(parts[1])
+        post = crud.get_post(post_id)
+        if post is None:
+            await cq.answer("ℹ️ Post not found.", show_alert=True)
+            return
+        crud.update_post(post_id, publish_mode="intent")
+        chat_id = update.effective_chat.id
+        if post.thread is not None:
+            from scheduler.publisher import _final_thread_texts
+            tweets = _final_thread_texts(post)
+            media_lists = [
+                list(tt.media_ids or [])
+                for tt in sorted(post.thread.tweets, key=lambda t: t.position)
+            ]
+            await send_intent_thread(context.bot, chat_id, tweets,
+                                     post_id=post_id, media_lists=media_lists)
+        else:
+            from scheduler.publisher import final_text_for
+            text = final_text_for(post)
+            await send_intent_post(context.bot, chat_id, text,
+                                   post_id=post_id, media=list(post.media))
+
 
 async def _safe_edit(bot, chat_id: int, msg_id: int, text: str, kb, on_fail) -> None:
     """Edit picker message; if it's a stale queue row, run fallback instead."""
@@ -257,3 +282,30 @@ async def reschedule_existing(context: ContextTypes.DEFAULT_TYPE, chat_id: int, 
         sent = await context.bot.send_message(chat_id=chat_id, text=html,
                                               reply_markup=kb, parse_mode="HTML")
         crud.update_post(post_id, tg_message_id=sent.message_id)
+
+
+async def on_intent_done(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handler for intent_done:<post_id>[:<tweet_index>] — marks post as posted_manual."""
+    cq = update.callback_query
+    await cq.answer("✅ Marked as posted")
+    if not is_admin(update):
+        return
+    # data format: intent_done:<post_id>  or  intent_done:<post_id>:<tweet_index>
+    raw = cq.data.split(":", 2)
+    post_id_str = raw[1] if len(raw) > 1 else ""
+    if not post_id_str.isdigit():
+        return
+    post_id = int(post_id_str)
+    post = crud.get_post(post_id)
+    if post is not None and post.status not in ("published", "posted_manual"):
+        crud.update_post(post_id, status="posted_manual")
+    try:
+        await cq.edit_message_reply_markup(reply_markup=None)
+    except BadRequest:
+        try:
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text=f"✅ Post #{post_id} marked as posted."
+            )
+        except Exception:
+            pass

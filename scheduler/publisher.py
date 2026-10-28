@@ -13,6 +13,7 @@ from telegram.ext import Application
 from db import crud
 from utils import config
 from utils.formatting import escape_html, effective_length, strip_markdown
+from utils.intent_link import send_intent_post, send_intent_thread
 from utils.timeutil import to_admin_tz
 from utils.twitter import PublishError, publish_tweet
 
@@ -65,6 +66,15 @@ async def publish_post(application: Application, post_id: int, manual: bool = Fa
         log.info("publish skipped (paused): post %s", post_id)
         return False
 
+    # Intent mode: send the web-intent link to the owner chat instead of X API.
+    if getattr(post, "publish_mode", "api") == "intent":
+        try:
+            await _publish_intent(application, post)
+            return True
+        except Exception:
+            log.exception("intent publish failed for post %s", post_id)
+            return False
+
     try:
         if post.thread is not None:
             await _publish_thread(application, post)
@@ -86,6 +96,24 @@ async def publish_post(application: Application, post_id: int, manual: bool = Fa
         crud.update_post(post_id, status="failed", error=f"Unexpected: {exc}")
         await _notify_failure(application, post_id, str(exc))
         return False
+
+
+async def _publish_intent(application: Application, post) -> None:
+    """Scheduled intent-mode post: send the 'Open in X' link card to the owner chat."""
+    chat_id = config.ADMIN_ID
+    if post.thread is not None:
+        tweets = _final_thread_texts(post)
+        media_lists = [
+            list(tt.media_ids or [])
+            for tt in sorted(post.thread.tweets, key=lambda t: t.position)
+        ]
+        await send_intent_thread(application.bot, chat_id, tweets,
+                                 post_id=post.id, media_lists=media_lists)
+    else:
+        text = final_text_for(post)
+        await send_intent_post(application.bot, chat_id, text,
+                               post_id=post.id, media=list(post.media))
+
 
 
 async def _publish_single(application: Application, post) -> None:

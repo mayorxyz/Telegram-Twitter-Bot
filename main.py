@@ -23,6 +23,7 @@ from telegram.ext import (
 from db import crud
 from db.database import init_db
 from handlers import drafts, editor, queue, report, scheduler_flow, settings, templates, threads
+from handlers.scheduler_flow import on_intent_done
 from scheduler import jobs
 from utils import config, single_instance
 
@@ -349,9 +350,9 @@ def build_application() -> Application:
     # pattern matches. Patterns below are mutually exclusive.
     # 1) Draft cards: d:<id>:<action>, tag:, dup:, f: (failure actions), st: (stats)
     app.add_handler(CallbackQueryHandler(drafts.draft_callback, pattern=r"^(d|tag|dup|f|st):"))
-    # 2) Calendar/time picker + immediate publish from cards: cal:, day:, hr:, mn:, now:, quick:
+    # 2) Calendar/time picker + immediate publish from cards: cal:, day:, hr:, mn:, now:, quick:, post_intent:
     app.add_handler(CallbackQueryHandler(scheduler_flow.sched_callback,
-                                         pattern=r"^(cal|day|hr|mn|now|quick):"))
+                                         pattern=r"^(cal|day|hr|mn|now|quick|post_intent):"))
     # 3) Queue view pagination + item actions: q:<action>:<id>
     app.add_handler(CallbackQueryHandler(queue.queue_callback, pattern=r"^q:"))
     # 4) Queue delete two-step (10s undo window) + post-now aliases outside q: namespace
@@ -371,6 +372,9 @@ def build_application() -> Application:
 
     # ---- global error classification: 409 conflicts / network blips ---------
     app.add_error_handler(on_error)
+
+    # ---- intent-done: mark a manually-posted tweet as posted_manual -----------
+    app.add_handler(CallbackQueryHandler(on_intent_done, pattern=r"^intent_done:"))
 
     return app
 
